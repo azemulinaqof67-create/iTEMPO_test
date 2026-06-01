@@ -37,8 +37,48 @@ _tg_app = None  # Telegram Application для проверки статуса
 _max_running = False
 _admin_app: Optional[FastAPI] = None
 
+# Непримененные изменения документов
+_pending_changes = {
+    "to_index": set(),
+    "to_delete": set(),
+}
+
 # WebSocket подключения для real-time логов
 _ws_clients: Set[WebSocket] = set()
+
+
+def _extract_doc_title(file_path: Path) -> Optional[str]:
+    """Извлечь заголовок из .md файла (frontmatter title или # H1)."""
+    if file_path.suffix.lower() != ".md":
+        return None
+    try:
+        # Читаем только первые 20 строк для скорости
+        lines = []
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                lines.append(line.strip())
+        
+        # Сначала ищем title: в yaml frontmatter
+        in_frontmatter = False
+        for line in lines:
+            if line == "---":
+                in_frontmatter = not in_frontmatter
+                continue
+            if in_frontmatter or line.startswith("title:"):
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip()
+                    return title.strip('"').strip("'")
+
+        # Если не нашли, ищем H1 заголовок (# Заголовок)
+        for line in lines:
+            if line.startswith("# "):
+                return line[2:].strip()
+    except Exception:
+        pass
+    return None
 
 
 def create_admin_app(config, assistant=None) -> FastAPI:
@@ -308,6 +348,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                     docs.append({
                         "path": str(f.relative_to(data_path)).replace("\\", "/"),
                         "name": f.name,
+                        "title": _extract_doc_title(f),
                         "company": None,
                         "company_name": "Все предприятия",
                         "size": f.stat().st_size,
@@ -322,6 +363,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         docs.append({
                             "path": str(f.relative_to(data_path)).replace("\\", "/"),
                             "name": f.name,
+                            "title": _extract_doc_title(f),
                             "company": company_id,
                             "company_name": COMPANIES[company_id],
                             "size": f.stat().st_size,
@@ -335,6 +377,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         docs.append({
                             "path": str(f.relative_to(data_path)).replace("\\", "/"),
                             "name": f.name,
+                            "title": _extract_doc_title(f),
                             "company": None,
                             "company_name": f"Общие / {item.name}",
                             "size": f.stat().st_size,
@@ -417,16 +460,92 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         target_path.write_text(content, encoding="utf-8")
         logger.info(f"Document saved: {target_path}")
 
-        # Запускаем переиндексацию в фоне
-        asyncio.create_task(_reindex_document(str(target_path)))
-        # Запускаем автоматическое обновление index.md в фоне
+        # Добавляем в список изменений для индексации
+        _pending_changes["to_index"].add(str(target_path))
+        # Убираем из списка удаления на случай, если файл перезаписан
+        rel_path = str(target_path.relative_to(data_path)).replace("\\", "/")
+        _pending_changes["to_delete"].discard(rel_path)
+
+        # Запускаем автоматическое обновление index.md в фоне (на диске)
         asyncio.create_task(_update_index_file_with_ai(str(target_path), company_id))
 
         return {
             "success": True,
-            "path": str(target_path.relative_to(data_path)).replace("\\", "/"),
-            "message": "Документ сохранён. Автоматическое обновление index.md и переиндексация запущены в фоне."
+            "path": rel_path,
+            "message": "Документ сохранён на диск. Автоматическое обновление index.md запущено. Для обновления векторной базы нажмите «Применить изменения»."
         }
+
+    class MoveDocumentRequest(BaseModel):
+        path: str
+        company_id: Optional[str] = None
+
+    @app.post("/api/documents/move")
+    async def move_document(body: MoveDocumentRequest, request: Request):
+        require_auth(request)
+        if not body.path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+
+        data_path = Path(_config.data_path)
+        source_path = (data_path / body.path).resolve()
+        
+        # Проверка безопасности пути источника
+        if not str(source_path).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+
+        if not source_path.exists():
+            return JSONResponse({"error": "Файл не найден"}, status_code=404)
+
+        # Вычисляем относительный путь источника
+        old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
+
+        # Определяем целевую папку
+        if body.company_id:
+            target_dir = data_path / body.company_id
+        else:
+            target_dir = data_path / "common"
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / source_path.name
+
+        # Если файл с таким именем уже существует в целевой папке, переименовываем
+        if target_path.exists() and target_path.resolve() != source_path.resolve():
+            base_name = source_path.stem
+            ext = source_path.suffix
+            counter = 1
+            while target_path.exists():
+                target_path = target_dir / f"{base_name}_{counter}{ext}"
+                counter += 1
+
+        # Если целевой путь совпадает с исходным, ничего не делаем
+        if target_path.resolve() == source_path.resolve():
+            return {"success": True, "message": "Файл уже находится в целевой папке."}
+
+        try:
+            # Переносим файл физически
+            import shutil
+            shutil.move(str(source_path), str(target_path))
+            logger.info(f"Document moved from {source_path} to {target_path}")
+
+            # Добавляем старый путь в список удаления
+            _pending_changes["to_delete"].add(old_rel_path)
+            # Добавляем новый путь в список индексации
+            _pending_changes["to_index"].add(str(target_path))
+            
+            # Убираем старый абсолютный путь из списка индексации если он там был
+            old_abs_path = str(source_path)
+            _pending_changes["to_index"].discard(old_abs_path)
+
+            # Запускаем автоматическое обновление index.md для новой папки в фоне
+            asyncio.create_task(_update_index_file_with_ai(str(target_path), body.company_id))
+
+            return {
+                "success": True,
+                "path": str(target_path.relative_to(data_path)).replace("\\", "/"),
+                "message": "Документ успешно перенесён. Автоматическое обновление index.md запущено. Для обновления векторной базы нажмите «Применить изменения»."
+            }
+        except Exception as e:
+            logger.error(f"Error moving document: {e}")
+            return JSONResponse({"error": f"Не удалось перенести файл: {str(e)}"}, status_code=500)
 
     @app.delete("/api/documents")
     async def delete_document(request: Request):
@@ -447,7 +566,85 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
         full_path.unlink()
         logger.info(f"Document deleted: {full_path}")
-        return {"success": True, "message": "Документ удалён. Рекомендуется переиндексация."}
+        
+        # Добавляем в список удаления
+        _pending_changes["to_delete"].add(doc_path)
+        # Убираем из списка индексации если он там был
+        _pending_changes["to_index"].discard(str(full_path))
+
+        return {"success": True, "message": "Документ удалён с диска. Для очистки векторной базы примените изменения."}
+
+    @app.get("/api/documents/content")
+    async def get_document_content(request: Request, path: str):
+        require_auth(request)
+        if not path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+
+        data_path = Path(_config.data_path)
+        full_path = (data_path / path).resolve()
+        # Проверка что путь внутри data/
+        if not str(full_path).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+
+        if not full_path.exists():
+            return JSONResponse({"error": "Файл не найден"}, status_code=404)
+
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="ignore")
+            return {"content": content}
+        except Exception as e:
+            return JSONResponse({"error": f"Ошибка чтения файла: {str(e)}"}, status_code=500)
+
+    @app.get("/api/documents/pending")
+    async def get_pending_changes(request: Request):
+        require_auth(request)
+        has_changes = len(_pending_changes["to_index"]) > 0 or len(_pending_changes["to_delete"]) > 0
+        return {
+            "has_changes": has_changes,
+            "to_index": list(_pending_changes["to_index"]),
+            "to_delete": list(_pending_changes["to_delete"])
+        }
+
+    @app.post("/api/documents/apply")
+    async def apply_documents_changes(request: Request):
+        require_auth(request)
+        if not _pending_changes["to_index"] and not _pending_changes["to_delete"]:
+            return {"success": True, "message": "Нет изменений для применения."}
+
+        # Копируем списки для фоновой задачи
+        to_index = list(_pending_changes["to_index"])
+        to_delete = list(_pending_changes["to_delete"])
+
+        # Очищаем глобальные списки
+        _pending_changes["to_index"].clear()
+        _pending_changes["to_delete"].clear()
+
+        # Запускаем фоновую задачу для переиндексации
+        async def run_apply():
+            try:
+                from src.rag.ingestion.embeddings import EmbeddingService
+                embedder = EmbeddingService(_config)
+
+                # 1. Удаляем векторы для удаленных файлов
+                if to_delete:
+                    logger.info(f"Applying changes: deleting vectors for {to_delete}")
+                    await embedder.incremental_update([], target_sources=to_delete)
+
+                # 2. Индексируем новые и измененные файлы
+                if to_index:
+                    logger.info(f"Applying changes: indexing files {to_index}")
+                    for file_path in to_index:
+                        await _reindex_document(file_path)
+                logger.info("All pending changes applied successfully.")
+            except Exception as e:
+                logger.error(f"Error applying pending changes: {e}")
+
+        asyncio.create_task(run_apply())
+
+        return {
+            "success": True,
+            "message": "Применение изменений запущено в фоне. Переиндексация выполняется."
+        }
 
     # ─── Рассылка ─────────────────────────────────────────────────────────
 
@@ -470,10 +667,6 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             cutoff = time.time() - body.active_days * 86400
             users = [u for u in users if u.get("last_activity") and u["last_activity"] > cutoff]
 
-        # Фильтрация по платформе
-        if body.platform != "all":
-            users = [u for u in users if u.get("platform") == body.platform]
-
         # Фильтрация по компании
         if body.company_id:
             users = [u for u in users if u.get("company_id") == body.company_id]
@@ -481,33 +674,31 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Исключаем заблокированных
         users = [u for u in users if not u.get("is_blocked")]
 
+        # Фильтрация по платформе на основе префикса ID
+        targeted_users = []
+        for u in users:
+            user_id = u.get("user_id", "")
+            if isinstance(user_id, str) and user_id.startswith("max_"):
+                detected_platform = "max"
+            else:
+                detected_platform = "telegram"
+
+            if body.platform != "all" and body.platform != detected_platform:
+                continue
+
+            u["_detected_platform"] = detected_platform
+            targeted_users.append(u)
+
         sent = 0
         failed = 0
 
-        for user in users:
+        for user in targeted_users:
             user_id = user["user_id"]
-            user_platform = user.get("platform")  # Может быть "telegram", "max" или None
-
-            # Определяем, нужно ли слать в Telegram
-            send_to_tg = False
-            if body.platform == "telegram":
-                send_to_tg = True
-            elif body.platform == "all":
-                if user_platform == "telegram" or not user_platform:
-                    send_to_tg = True
-
-            # Определяем, нужно ли слать в MAX
-            send_to_max = False
-            if body.platform == "max":
-                send_to_max = True
-            elif body.platform == "all":
-                if user_platform == "max" or not user_platform:
-                    send_to_max = True
+            detected_platform = user["_detected_platform"]
 
             success = False
 
-            # Пытаемся отправить в Telegram
-            if send_to_tg and _tg_app:
+            if detected_platform == "telegram" and _tg_app:
                 try:
                     await _tg_app.bot.send_message(
                         chat_id=int(user_id),
@@ -518,26 +709,39 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                     success = True
                     await asyncio.sleep(0.05)
                 except Exception as e:
-                    logger.debug(f"Broadcast: failed to send Telegram message to {user_id}: {e}")
+                    logger.error(f"Broadcast: failed to send Telegram message to {user_id}: {e}")
 
-            # Пытаемся отправить в MAX (если еще не отправлено в Telegram)
-            if send_to_max and _config.max_token and not success:
+            elif detected_platform == "max" and _config.max_token:
                 try:
+                    # Очищаем user_id от префикса 'max_'
+                    clean_chat_id = user_id
+                    if isinstance(clean_chat_id, str) and clean_chat_id.startswith("max_"):
+                        clean_chat_id = clean_chat_id[4:]
+                    try:
+                        clean_chat_id = int(clean_chat_id)
+                    except ValueError:
+                        pass
+
                     import httpx
+                    headers = {
+                        "Authorization": _config.max_token,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    }
                     async with httpx.AsyncClient() as client:
                         resp = await client.post(
-                            f"https://botapi.max.ru/messages",
-                            params={"access_token": _config.max_token},
-                            json={"recipient": {"chat_id": user_id}, "text": body.text}
+                            f"https://platform-api.max.ru/messages?chat_id={clean_chat_id}",
+                            headers=headers,
+                            json={"text": body.text, "format": "html"}
                         )
-                        if resp.status_code == 200:
+                        if resp.status_code in (200, 201):
                             sent += 1
                             success = True
                             await asyncio.sleep(0.05)
                         else:
-                            logger.debug(f"Broadcast: failed to send MAX message to {user_id}, status: {resp.status_code}")
+                            logger.error(f"Broadcast: failed to send MAX message to {user_id}, status: {resp.status_code}, response: {resp.text}")
                 except Exception as e:
-                    logger.debug(f"Broadcast: failed to send MAX message to {user_id}: {e}")
+                    logger.error(f"Broadcast: failed to send MAX message to {user_id}: {e}")
 
             if not success:
                 failed += 1
@@ -546,7 +750,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             "success": True,
             "sent": sent,
             "failed": failed,
-            "total_targeted": len(users),
+            "total_targeted": len(targeted_users),
         }
 
     # ─── API ключи ────────────────────────────────────────────────────────

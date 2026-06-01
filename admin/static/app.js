@@ -112,7 +112,16 @@ async function apiFetch(url, options = {}) {
 
 // ── Navigation ────────────────────────────────────────────────────────────
 
+let hasPendingChanges = false;
+
 function showPage(name, navEl) {
+  if (currentPage === 'documents' && name !== 'documents' && hasPendingChanges) {
+    const leave = confirm("Вы уверены что хотите уйти со страницы? У вас есть не сохраненные изменения. Для сохранения нажмите кнопку в правом верхнем углу.");
+    if (!leave) {
+      return false;
+    }
+  }
+
   // Скрываем все страницы
   document.querySelectorAll('.page').forEach(p => {
     p.classList.remove('active');
@@ -521,6 +530,7 @@ async function loadDocuments() {
     allDocuments = data.documents || [];
     buildDocFilterTabs();
     renderDocuments();
+    checkPendingChanges();
   } catch(e) {
     if (loading) loading.textContent = 'Ошибка: ' + e.message;
   }
@@ -586,10 +596,22 @@ function renderDocuments() {
           <span class="company-badge ${isCommon?'common':''}">${doc.company_name}</span>
         </div>
         <div class="doc-name">📄 ${doc.name}</div>
+        ${doc.title ? `<div class="doc-title" style="font-size: 13px; color: var(--accent); font-weight: 500; margin-top: -2px;">${escapeHtml(doc.title)}</div>` : ''}
         <div class="doc-meta">${size} · ${modified}</div>
         <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${doc.path}</div>
         <div class="doc-actions">
-          <button class="btn btn-danger btn-sm" onclick="deleteDocument('${escapeHtml(doc.path)}')">🗑 Удалить</button>
+          <button class="btn btn-secondary" onclick="viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
+            <span>👁</span><span>Посмотреть</span>
+          </button>
+          <button class="btn btn-secondary" onclick="editDocument('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Изменить">
+            <span>✏️</span><span>Изменить</span>
+          </button>
+          <button class="btn btn-secondary" onclick="showMoveDocModal('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Перенести">
+            <span>📦</span><span>Перенести</span>
+          </button>
+          <button class="btn btn-danger" onclick="deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
+            <span>🗑</span><span>Удалить</span>
+          </button>
         </div>
       </div>`;
   }).join('');
@@ -598,6 +620,16 @@ function renderDocuments() {
 function showDocUpload() {
   document.getElementById('docUploadPanel').classList.remove('hidden');
   document.getElementById('docPreviewSection').classList.add('hidden');
+  
+  // Автоматически выбираем текущее предприятие из фильтра
+  const docCompanySelect = document.getElementById('docCompany');
+  if (docCompanySelect) {
+    if (currentCompanyFilter !== 'all' && currentCompanyFilter !== 'common') {
+      docCompanySelect.value = currentCompanyFilter;
+    } else {
+      docCompanySelect.value = ''; // Все предприятия (общий)
+    }
+  }
 }
 
 function hideDocUpload() {
@@ -698,7 +730,9 @@ async function saveDocument() {
     el.className = 'success';
     el.classList.remove('hidden');
     toast('Документ сохранён!', 'success');
-    setTimeout(loadDocuments, 2000);
+    setTimeout(async () => {
+      await loadDocuments();
+    }, 2000);
   } catch(e) {
     const el = document.getElementById('saveResult');
     el.textContent = 'Ошибка: ' + e.message;
@@ -714,9 +748,167 @@ async function deleteDocument(path) {
       method: 'DELETE',
       body: JSON.stringify({path}),
     });
-    toast('Документ удалён', 'success');
-    loadDocuments();
+    toast('Документ удалён с диска. Примените изменения для очистки векторной базы.', 'info');
+    await loadDocuments();
   } catch(e) { toast(e.message, 'error'); }
+}
+
+async function viewDocumentContent(path) {
+  const filename = path.split('/').pop();
+  openModal(
+    filename,
+    '<div class="loading-cell">Загрузка содержимого...</div>',
+    '<button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>',
+    true
+  );
+
+  try {
+    const data = await apiFetch(`/api/documents/content?path=${encodeURIComponent(path)}`);
+    if (!data || data.content === undefined) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Не удалось загрузить содержимое</div>';
+      return;
+    }
+    
+    const safeContent = escapeHtml(data.content);
+    const bodyHtml = `
+      <div class="detail-view">
+        <div class="detail-row">
+          <span class="detail-label">Путь: ${escapeHtml(path)}</span>
+          <div class="detail-value-box" style="max-height: 60vh; font-family: monospace; white-space: pre-wrap;">${safeContent}</div>
+        </div>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function showMoveDocModal(path, currentCompanyId) {
+  const filename = path.split('/').pop();
+  
+  const companyOptions = Object.entries(COMPANIES).map(([k,v]) =>
+    `<option value="${k}" ${k===currentCompanyId?'selected':''}>${v}</option>`
+  ).join('');
+
+  const bodyHtml = `
+    <div class="form-group">
+      <label>Текущий путь</label>
+      <input type="text" class="text-input" value="${escapeHtml(path)}" readonly style="opacity: 0.7;">
+    </div>
+    <div class="form-group">
+      <label>Перенести в предприятие (или общие)</label>
+      <select class="select-input" id="moveDocTargetCompany">
+        <option value="" ${!currentCompanyId?'selected':''}>📁 Все предприятия (общий)</option>
+        ${companyOptions}
+      </select>
+    </div>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="doMoveDocument('${escapeHtml(path)}')">💾 Перенести</button>
+  `;
+
+  openModal(`Перенос документа ${filename}`, bodyHtml, footerHtml, false);
+}
+
+async function doMoveDocument(path) {
+  const targetCompanyId = document.getElementById('moveDocTargetCompany').value;
+  try {
+    const res = await apiFetch('/api/documents/move', {
+      method: 'POST',
+      body: JSON.stringify({
+        path: path,
+        company_id: targetCompanyId || null
+      }),
+    });
+    toast(res.message || 'Документ успешно перенесён', 'success');
+    closeModal();
+    await loadDocuments();
+  } catch(e) {
+    toast(e.message || 'Ошибка переноса', 'error');
+  }
+}
+
+async function editDocument(path, companyId) {
+  try {
+    const data = await apiFetch(`/api/documents/content?path=${encodeURIComponent(path)}`);
+    if (!data || data.content === undefined) {
+      toast('Не удалось загрузить содержимое документа', 'error');
+      return;
+    }
+
+    // Открываем панель загрузки
+    showDocUpload();
+    
+    // Переключаемся на вкладку ручного ввода текста
+    const tabsContainer = document.querySelector('#docUploadPanel .tabs');
+    if (tabsContainer) {
+      const tabTextBtn = tabsContainer.children[1];
+      if (tabTextBtn) switchDocTab('text', tabTextBtn);
+    }
+
+    // Заполняем поля формы
+    document.getElementById('docCompany').value = companyId || '';
+    
+    const filename = path.split('/').pop();
+    document.getElementById('docTitle').value = filename.replace('.md', '');
+    document.getElementById('docTextContent').value = data.content;
+
+    // Показываем секцию превью с контентом для сохранения
+    document.getElementById('docPreview').value = data.content;
+    document.getElementById('docFilename').value = filename;
+    document.getElementById('docPreviewSection').classList.remove('hidden');
+    document.getElementById('saveResult').classList.add('hidden');
+
+    // Скроллим к форме
+    document.getElementById('docUploadPanel').scrollIntoView({ behavior: 'smooth' });
+    toast('Документ загружен в редактор', 'info');
+  } catch(e) {
+    toast('Ошибка загрузки: ' + e.message, 'error');
+  }
+}
+
+async function checkPendingChanges() {
+  try {
+    const data = await apiFetch('/api/documents/pending');
+    const btn = document.getElementById('btnApplyChanges');
+    if (btn) {
+      if (data && data.has_changes) {
+        btn.disabled = false;
+        hasPendingChanges = true;
+      } else {
+        btn.disabled = true;
+        hasPendingChanges = false;
+      }
+    }
+  } catch(e) {
+    console.error('Ошибка проверки изменений:', e);
+  }
+}
+
+async function applyPendingChanges() {
+  const btn = document.getElementById('btnApplyChanges');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Применяю...';
+  }
+
+  try {
+    const data = await apiFetch('/api/documents/apply', { method: 'POST' });
+    toast(data.message || 'Изменения успешно применены!', 'success');
+    hasPendingChanges = false;
+    if (btn) btn.textContent = '⚡ Применить изменения';
+    await checkPendingChanges();
+    await loadDocuments();
+  } catch(e) {
+    toast('Ошибка применения изменений: ' + e.message, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '⚡ Применить изменения';
+    }
+  }
 }
 
 // ── Broadcast ─────────────────────────────────────────────────────────────
@@ -982,6 +1174,16 @@ function populateCompanySelects() {
   if (authenticated) {
     showApp();
   }
+  
+  // Защита от случайного закрытия вкладки при наличии изменений
+  window.addEventListener('beforeunload', (e) => {
+    if (hasPendingChanges) {
+      e.preventDefault();
+      e.returnValue = 'У вас есть непримененные изменения в базе знаний.';
+      return e.returnValue;
+    }
+  });
+
   // Автообновление дашборда каждые 60 секунд
   setInterval(() => {
     if (currentPage === 'dashboard') loadDashboard();
