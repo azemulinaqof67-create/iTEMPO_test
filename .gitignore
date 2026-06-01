@@ -19,9 +19,9 @@ logs/
 *.log
 
 # Databases & Storage
-*.db
-*.sqlite
-*.sqlite3
+#*.db
+#*.sqlite
+#*.sqlite3
 qdrant_storage/
 qdrant_storage_v2/
 .chunks_cache/
@@ -39,4 +39,4 @@ Thumbs.db
 
 # Local Config
 client_config.json
-.env
+#.env
