@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -15,7 +15,7 @@ from src.core.exceptions import ConfigError
 class TextModelConfig:
     """Конфигурация текстовой модели"""
 
-    name: Optional[str] = "gemini-3.1-flash-lite-preview"
+    name: Optional[str] = "gemini-3.5-flash"
     api_version: Optional[str] = None
     temperature: float = 0.5
     top_p: float = 0.95
@@ -23,6 +23,7 @@ class TextModelConfig:
     max_context_chars: int = 20000
     disable_safety: bool = True
     system_prompt_template: str = ""
+    fallbacks: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -58,7 +59,7 @@ class AudioModelConfig:
 class EmbeddingModelConfig:
     """Конфигурация модели эмбеддингов"""
 
-    name: Optional[str] = "gemini-embedding-001"
+    name: Optional[str] = "gemini-embedding-2"
     api_version: str = "v1beta"
 
 
@@ -66,7 +67,7 @@ class EmbeddingModelConfig:
 class ContextualRetrievalConfig:
     """Конфигурация контекстуального поиска"""
 
-    model: Optional[str] = "gemini-flash-latest"
+    model: Optional[str] = "gemini-3.5-flash"  # дефолт из yaml перетрёт это
     max_doc_chars: int = 12000
     parallelism: int = 4
 
@@ -112,7 +113,7 @@ def load_models_config(yaml_path: str = "models_config.yaml") -> ModelsConfig:
     try:
         text_data = data.get("text_model", {})
         text_model = TextModelConfig(
-            name=text_data.get("name", "gemini-3.1-flash-lite-preview"),
+            name=text_data.get("name", "gemini-3.5-flash"),
             api_version=text_data.get("api_version"),
             temperature=text_data.get("generation", {}).get("temperature", 0.5),
             top_p=text_data.get("generation", {}).get("top_p", 0.95),
@@ -120,6 +121,7 @@ def load_models_config(yaml_path: str = "models_config.yaml") -> ModelsConfig:
             max_context_chars=text_data.get("limits", {}).get("max_context_chars", 20000),
             disable_safety=text_data.get("safety", {}).get("disabled", True),
             system_prompt_template=text_data.get("prompt", {}).get("template", ""),
+            fallbacks=text_data.get("fallbacks", []),
         )
     except Exception as e:
         raise ConfigError(f"Ошибка парсинга text_model: {e}") from e
@@ -159,7 +161,7 @@ def load_models_config(yaml_path: str = "models_config.yaml") -> ModelsConfig:
     try:
         embedding_data = data.get("embedding_model", {})
         embedding_model = EmbeddingModelConfig(
-            name=embedding_data.get("name", "gemini-embedding-001"),
+            name=embedding_data.get("name", "gemini-embedding-2"),
             api_version=embedding_data.get("api_version", "v1beta"),
         )
     except Exception as e:
@@ -169,7 +171,7 @@ def load_models_config(yaml_path: str = "models_config.yaml") -> ModelsConfig:
     try:
         contextual_data = data.get("contextual_retrieval", {})
         contextual_retrieval = ContextualRetrievalConfig(
-            model=contextual_data.get("model", "gemini-1.5-flash"),
+            model=contextual_data.get("model", "gemini-3.5-flash"),
             max_doc_chars=contextual_data.get("max_doc_chars", 12000),
             parallelism=contextual_data.get("parallelism", 4),
         )

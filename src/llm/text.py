@@ -142,7 +142,7 @@ class TextLLMService:
                     # Если модель не в словаре — используется DEFAULT_TIMEOUT.
                     MODEL_TIMEOUTS = {
                         "gemini-2.5-flash-lite": 40.0,          # стабильная, но может давать 20-35с при нагрузке
-                        "gemini-3.1-flash-lite-preview": 40.0,  # legacy preview
+                        "gemini-3.1-flash-lite": 40.0,          # стабильная версия
                         "gemma-3-27b-it": 50.0,                 # tier-1 fallback
                         "gemma-3-12b-it": 60.0,                 # tier-2 fallback
                     }

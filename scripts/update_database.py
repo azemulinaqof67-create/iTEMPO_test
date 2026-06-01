@@ -61,6 +61,12 @@ async def main():
     for idx, file_path in enumerate(files, 1):
         print(f"\n[{idx}/{len(files)}] {file_path.name}")
         file_chunks = chunks_cache.get_or_create(file_path, chunker_fn)
+        # Обогащаем чанки тегами из пути на случай, если они загружены из старого кэша
+        for chunk in file_chunks:
+            source = chunk.get("source", "")
+            if source and "doc_type" not in chunk:
+                tags = processor.extract_tags(source)
+                chunk.update(tags)
         all_chunks.extend(file_chunks)
 
     chunks = all_chunks

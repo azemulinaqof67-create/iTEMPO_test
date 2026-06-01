@@ -30,7 +30,8 @@ MODEL_API_VERSIONS: Dict[str, str] = {
     "gemini-2.0-flash-lite-preview": "v1beta",
     "gemini-2.5-flash": "v1beta",
     "gemini-2.5-flash-lite": "v1beta",
-    "gemini-3.1-flash-lite-preview": "v1beta",
+    "gemini-3.1-flash-lite": "v1beta",
+    "gemini-3.5-flash": "v1beta",
     "gemma-3-27b-it": "v1beta",
     "gemma-3-12b-it": "v1beta",
 }

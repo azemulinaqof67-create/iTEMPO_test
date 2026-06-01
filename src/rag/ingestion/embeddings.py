@@ -12,8 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from fastembed import SparseTextEmbedding
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, PointStruct, VectorParams, SparseVectorParams, SparseIndexParams, SparseVector
 
 from src.core.clients import ClientManager, GeminiEmbedder
 from src.core.config import Config
@@ -327,6 +328,10 @@ class EmbeddingService:
         # если предыдущие "повисли" на сетевом таймауте.
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="emb_")
 
+        # Инициализация модели для генерации разреженных векторов
+        logger.info("Инициализация модели разреженных векторов Qdrant/bm25...")
+        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+
     def _build_pool(self, config: Config, model_name: Optional[str] = None) -> KeyPool:
         """Создать пул слотов для конкретной модели через ApiKeyManager."""
         from google import genai
@@ -498,6 +503,22 @@ class EmbeddingService:
 
         raise RuntimeError("Критическая ошибка: все модели эмбеддингов исчерпали СУТОЧНЫЙ лимит (RPD).")
 
+    async def _encode_sparse(self, loop, texts: List[str]) -> List[SparseVector]:
+        """Генерация разреженных векторов с использованием fastembed и конвертация в SparseVector."""
+        def _run():
+            raw_embeddings = self.sparse_model.embed(texts)
+            results = []
+            for emb in raw_embeddings:
+                results.append(
+                    SparseVector(
+                        indices=emb.indices.tolist() if hasattr(emb.indices, "tolist") else list(emb.indices),
+                        values=emb.values.tolist() if hasattr(emb.values, "tolist") else list(emb.values)
+                    )
+                )
+            return results
+
+        return await loop.run_in_executor(self._executor, _run)
+
     async def _qdrant_op(self, loop, func, *args):
         """Простой вызов Qdrant-операции с ретраями."""
         for attempt in range(3):
@@ -519,12 +540,14 @@ class EmbeddingService:
             logger.info("[-] Удаление старой коллекции %s...", self.config.collection_name)
             client.delete_collection(self.config.collection_name)
 
-        logger.info("[+] Создание коллекции %s (size=%d)...", self.config.collection_name, self.config.vector_size)
+        logger.info("[+] Создание коллекции %s (size=%d, с разреженными векторами)...", self.config.collection_name, self.config.vector_size)
         await self._qdrant_op(
             loop,
-            client.create_collection,
-            self.config.collection_name,
-            VectorParams(size=self.config.vector_size, distance=Distance.COSINE),
+            lambda: client.create_collection(
+                collection_name=self.config.collection_name,
+                vectors_config=VectorParams(size=self.config.vector_size, distance=Distance.COSINE),
+                sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
+            ),
         )
 
         batch_size = 8
@@ -562,9 +585,11 @@ class EmbeddingService:
         if not collection_exists:
             await self._qdrant_op(
                 loop,
-                client.create_collection,
-                self.config.collection_name,
-                VectorParams(size=self.config.vector_size, distance=Distance.COSINE),
+                lambda: client.create_collection(
+                    collection_name=self.config.collection_name,
+                    vectors_config=VectorParams(size=self.config.vector_size, distance=Distance.COSINE),
+                    sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
+                ),
             )
             print("Создана новая коллекция")
 
@@ -608,13 +633,21 @@ class EmbeddingService:
             return
 
         texts = [item["text"] for item in valid_items]
-        embeddings = await self._encode_with_retry(loop, texts)
+        # Генерация плотных векторов
+        dense_embeddings = await self._encode_with_retry(loop, texts)
+        # Генерация разреженных векторов
+        sparse_embeddings = await self._encode_sparse(loop, texts)
 
         points = []
-        for doc, emb in zip(valid_items, embeddings, strict=False):
+        for doc, dense_emb, sparse_emb in zip(valid_items, dense_embeddings, sparse_embeddings, strict=False):
             payload = {
                 k: v for k, v in doc.items() if k != "document_text" and isinstance(v, (str, int, float, bool, list, dict))
             }
-            points.append(PointStruct(id=str(uuid.uuid4()), vector=emb.tolist(), payload=payload))
+            # Передаем именованные векторы: "" (dense) и "sparse" (sparse)
+            vector_data = {
+                "": dense_emb if isinstance(dense_emb, list) else dense_emb.tolist(),
+                "sparse": sparse_emb
+            }
+            points.append(PointStruct(id=str(uuid.uuid4()), vector=vector_data, payload=payload))
 
         await self._qdrant_op(loop, client.upsert, self.config.collection_name, points)
