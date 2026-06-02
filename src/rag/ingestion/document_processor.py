@@ -20,11 +20,10 @@ class DocumentProcessor:
         self.config = config
         self.loader = DocumentLoader(config)
 
-        # Инициализация семантического чанкера отключена принудительно для стабильности Parent-Child
         semantic_chunker = None
-        # if self.config.use_semantic_chunking:
-        #     embedder = ClientManager.get_instance(self.config).get_embedder()
-        #     semantic_chunker = SemanticChunker(embedder=embedder, threshold=self.config.semantic_similarity_threshold)
+        if self.config.use_semantic_chunking:
+            embedder = ClientManager.get_instance(self.config).get_embedder()
+            semantic_chunker = SemanticChunker(embedder=embedder, threshold=self.config.semantic_similarity_threshold)
 
         self.chunker = TextChunker(config, semantic_chunker)
 

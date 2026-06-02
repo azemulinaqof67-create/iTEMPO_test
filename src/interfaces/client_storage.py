@@ -13,7 +13,7 @@ class AsyncHistoryManager:
                 from src.core.config import Config
                 db_url = Config.from_env().database_url
             except Exception:
-                db_url = "postgresql://postgres:postgres@localhost:5432/itempo" # fallback
+                db_url = "postgresql://postgres:123456@127.0.0.1:5432/itempo" # fallback
         self.db_url = db_url
         self._pool: Optional[asyncpg.Pool] = None
         self._init_lock = asyncio.Lock()

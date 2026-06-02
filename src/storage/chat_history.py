@@ -392,12 +392,26 @@ class ChatHistoryManager:
                 WHERE username = $1
             """, username)
             if row:
+                def parse_company_ids(val: Optional[str]) -> List[str]:
+                    if not val:
+                        return []
+                    if val == "all":
+                        return ["all"]
+                    if val.startswith("[") and val.endswith("]"):
+                        try:
+                            return json.loads(val)
+                        except Exception:
+                            return [val]
+                    return [val]
+                
+                c_ids = parse_company_ids(row["company_id"])
                 return {
                     "id": row["id"],
                     "username": row["username"],
                     "password_hash": row["password_hash"],
                     "role": row["role"],
                     "company_id": row["company_id"],
+                    "company_ids": c_ids,
                     "permissions": json.loads(row["permissions"]),
                 }
             return None
@@ -410,13 +424,28 @@ class ChatHistoryManager:
                 FROM admin_users
                 ORDER BY username ASC
             """)
+        
+        def parse_company_ids(val: Optional[str]) -> List[str]:
+            if not val:
+                return []
+            if val == "all":
+                return ["all"]
+            if val.startswith("[") and val.endswith("]"):
+                try:
+                    return json.loads(val)
+                except Exception:
+                    return [val]
+            return [val]
+
         result = []
         for row in rows:
+            c_ids = parse_company_ids(row["company_id"])
             result.append({
                 "id": row["id"],
                 "username": row["username"],
                 "role": row["role"],
                 "company_id": row["company_id"],
+                "company_ids": c_ids,
                 "permissions": json.loads(row["permissions"]),
             })
         return result
@@ -469,13 +498,13 @@ class ChatHistoryManager:
                     first_seen = COALESCE(users.first_seen, EXCLUDED.first_seen)
             """, str(user_id), now, platform)
 
-    async def get_all_users(self, limit: int = 500, offset: int = 0, company_id: Optional[str] = None) -> List[Dict]:
+    async def get_all_users(self, limit: int = 500, offset: int = 0, company_ids: Optional[List[str]] = None) -> List[Dict]:
         """Список всех пользователей для панели администратора."""
         pool = await self.get_pool()
-        if company_id == 'all':
-            company_id = None
+        if company_ids and 'all' in company_ids:
+            company_ids = None
         async with pool.acquire() as conn:
-            if company_id:
+            if company_ids:
                 rows = await conn.fetch("""
                     SELECT
                         user_id,
@@ -486,10 +515,10 @@ class ChatHistoryManager:
                         platform,
                         first_seen
                     FROM users
-                    WHERE company_id = $3
+                    WHERE company_id = ANY($3::text[])
                     ORDER BY COALESCE(last_activity, 0) DESC
                     LIMIT $1 OFFSET $2
-                """, limit, offset, company_id)
+                """, limit, offset, company_ids)
             else:
                 rows = await conn.fetch("""
                     SELECT
@@ -517,14 +546,14 @@ class ChatHistoryManager:
             })
         return result
 
-    async def get_users_count(self, company_id: Optional[str] = None) -> int:
+    async def get_users_count(self, company_ids: Optional[List[str]] = None) -> int:
         """Общее количество пользователей."""
         pool = await self.get_pool()
-        if company_id == 'all':
-            company_id = None
+        if company_ids and 'all' in company_ids:
+            company_ids = None
         async with pool.acquire() as conn:
-            if company_id:
-                return await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = $1", company_id) or 0
+            if company_ids:
+                return await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids) or 0
             return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
 
     async def block_user(self, user_id: str):
@@ -557,43 +586,43 @@ class ChatHistoryManager:
             )
         return bool(val) if val is not None else False
 
-    async def get_stats(self, company_id: Optional[str] = None) -> Dict:
-        """Статистика для дашборда с опциональной фильтрацией по компании."""
+    async def get_stats(self, company_ids: Optional[List[str]] = None) -> Dict:
+        """Статистика для дашборда с опциональной фильтрацией по компаниям."""
         pool = await self.get_pool()
         now = time.time()
         day_ago = now - 86400
         week_ago = now - 86400 * 7
 
-        if company_id == 'all':
-            company_id = None
+        if company_ids and 'all' in company_ids:
+            company_ids = None
 
         async with pool.acquire() as conn:
-            if company_id:
+            if company_ids:
                 total_messages = await conn.fetchval("""
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE u.company_id = $1
-                """, company_id) or 0
+                    WHERE u.company_id = ANY($1::text[])
+                """, company_ids) or 0
                 
                 today_messages = await conn.fetchval("""
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE m.timestamp > $1 AND u.company_id = $2
-                """, day_ago, company_id) or 0
+                    WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
+                """, day_ago, company_ids) or 0
                 
                 week_messages = await conn.fetchval("""
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE m.timestamp > $1 AND u.company_id = $2
-                """, week_ago, company_id) or 0
+                    WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
+                """, week_ago, company_ids) or 0
                 
-                total_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = $1", company_id) or 0
+                total_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids) or 0
                 
                 active_today = await conn.fetchval("""
                     SELECT COUNT(DISTINCT m.session_id) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE m.timestamp > $1 AND u.company_id = $2
-                """, day_ago, company_id) or 0
+                    WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
+                """, day_ago, company_ids) or 0
 
                 hourly_rows = await conn.fetch("""
                     SELECT
@@ -602,10 +631,10 @@ class ChatHistoryManager:
                         COUNT(*) as cnt
                     FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE m.timestamp > $1 AND u.company_id = $2
+                    WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
                     GROUP BY hour_ts
                     ORDER BY hour_ts
-                """, day_ago, company_id)
+                """, day_ago, company_ids)
 
                 daily_rows = await conn.fetch("""
                     SELECT
@@ -613,10 +642,10 @@ class ChatHistoryManager:
                         COUNT(*) as cnt
                     FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
-                    WHERE m.timestamp > $1 AND u.company_id = $2
+                    WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
                     GROUP BY day
                     ORDER BY day
-                """, week_ago, company_id)
+                """, week_ago, company_ids)
             else:
                 total_messages = await conn.fetchval("SELECT COUNT(*) FROM chat_messages") or 0
                 today_messages = await conn.fetchval(
@@ -671,7 +700,7 @@ class ChatHistoryManager:
         search: Optional[str] = None,
         date_from: Optional[float] = None,
         date_to: Optional[float] = None,
-        company_id: Optional[str] = None,
+        company_ids: Optional[List[str]] = None,
     ) -> List[Dict]:
         """Получение истории сообщений для лога в панели администратора."""
         pool = await self.get_pool()
@@ -699,9 +728,9 @@ class ChatHistoryManager:
             conditions.append(f"timestamp <= ${idx}")
             params.append(date_to)
             idx += 1
-        if company_id and company_id != 'all':
-            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ${idx})")
-            params.append(company_id)
+        if company_ids and 'all' not in company_ids:
+            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
+            params.append(company_ids)
             idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -734,7 +763,7 @@ class ChatHistoryManager:
         user_id: Optional[str] = None,
         platform: Optional[str] = None,
         search: Optional[str] = None,
-        company_id: Optional[str] = None,
+        company_ids: Optional[List[str]] = None,
     ) -> int:
         """Общее количество сообщений для пагинации."""
         pool = await self.get_pool()
@@ -754,9 +783,9 @@ class ChatHistoryManager:
             conditions.append(f"message ILIKE ${idx}")
             params.append(f"%{search}%")
             idx += 1
-        if company_id and company_id != 'all':
-            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ${idx})")
-            params.append(company_id)
+        if company_ids and 'all' not in company_ids:
+            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
+            params.append(company_ids)
             idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
