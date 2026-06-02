@@ -13,6 +13,10 @@ import asyncio
 import logging
 import os
 import threading
+import warnings
+
+# Игнорируем SyntaxWarning от сторонних библиотек (например, pydub в Python 3.12)
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 from dotenv import load_dotenv
 

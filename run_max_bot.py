@@ -7,8 +7,12 @@
 import asyncio
 import logging
 import os
+import warnings
 
 from dotenv import load_dotenv
+
+# Игнорируем SyntaxWarning от сторонних библиотек (например, pydub в Python 3.12)
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 # Настройка прокси из .env (выполняется до импорта AI-клиентов)
 load_dotenv()

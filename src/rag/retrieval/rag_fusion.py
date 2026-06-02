@@ -30,8 +30,13 @@ class RAGFusion:
         all_results = await asyncio.gather(*tasks)
 
         all_rankings: List[Dict[str, int]] = []
+        doc_by_id = {}
         for results in all_results:
-            ranking = {r["id"]: rank for rank, r in enumerate(results)}
+            ranking = {}
+            for rank, r in enumerate(results):
+                doc_id = r["id"]
+                ranking[doc_id] = rank
+                doc_by_id[doc_id] = r
             all_rankings.append(ranking)
 
         rrf_scores = {}
@@ -50,16 +55,16 @@ class RAGFusion:
         sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
         fused_results = []
         for doc_id in sorted_ids[:limit]:
-            payload = self.search.payload_by_id.get(doc_id, {})
+            doc = doc_by_id.get(doc_id, {})
             fused_results.append(
                 {
                     "id": doc_id,
-                    "text": payload.get("text", ""),
-                    "original_text": payload.get("original_text", ""),
-                    "source": payload.get("source", "Unknown"),
-                    "parent_text": payload.get("parent_text"),
-                    "parent_id": payload.get("parent_id"),
-                    "chunk_index": payload.get("chunk_index"),
+                    "text": doc.get("text", ""),
+                    "original_text": doc.get("original_text", ""),
+                    "source": doc.get("source", "Unknown"),
+                    "parent_text": doc.get("parent_text"),
+                    "parent_id": doc.get("parent_id"),
+                    "chunk_index": doc.get("chunk_index"),
                     "score": rrf_scores.get(doc_id, 0.0),
                 }
             )

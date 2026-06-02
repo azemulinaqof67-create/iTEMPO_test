@@ -161,7 +161,7 @@ contextual_retrieval:
 qdrant:
   storage_path: "qdrant_storage_v2"
   collection_name: "documents_v2"
-  vector_size: 1536
+  vector_size: 3072
   document_hashes_path: "qdrant_storage_v2/document_hashes.json"
 
 # ============================================
