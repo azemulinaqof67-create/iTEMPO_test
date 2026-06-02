@@ -1647,7 +1647,8 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=contents,
         )
@@ -1766,7 +1767,8 @@ async def _update_index_file_with_ai(new_doc_path: str, company_id: Optional[str
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=prompt,
         )
