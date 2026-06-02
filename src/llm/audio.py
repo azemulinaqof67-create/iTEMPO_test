@@ -58,8 +58,12 @@ try:
     add_paths()
     logger.info("FFmpeg added to PATH")
 except Exception as e:
-    logger.error(f"Failed to configure FFmpeg: {e}")
-    raise AudioError(f"FFmpeg initialization failed: {e}") from e
+    import shutil
+    if shutil.which("ffmpeg"):
+        logger.warning(f"static-ffmpeg initialization failed ({e}), but system ffmpeg is available in PATH.")
+    else:
+        logger.error(f"Failed to configure FFmpeg: {e}")
+        raise AudioError(f"FFmpeg initialization failed: {e}") from e
 
 
 class AudioLLMService:

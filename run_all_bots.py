@@ -13,6 +13,10 @@ import asyncio
 import logging
 import os
 import threading
+import warnings
+
+# Игнорируем SyntaxWarning от сторонних библиотек (например, pydub в Python 3.12)
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 from dotenv import load_dotenv
 
@@ -117,7 +121,8 @@ async def _run_all(config: Config):
             def run_uvicorn():
                 import uvicorn
                 # uvicorn.run сам создаст правильный event loop для своего потока
-                uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+                api_host = os.getenv("API_HOST", "0.0.0.0")
+                uvicorn.run(app, host=api_host, port=8000, log_level="info")
 
             api_thread = threading.Thread(target=run_uvicorn, daemon=True)
             api_thread.start()
@@ -140,9 +145,10 @@ async def _run_all(config: Config):
         
         def run_admin_server():
             import uvicorn
+            admin_host = os.getenv("ADMIN_HOST", "0.0.0.0")
             uvicorn.run(
                 admin_app,
-                host="127.0.0.1",
+                host=admin_host,
                 port=config.admin_port,
                 log_level="warning"
             )

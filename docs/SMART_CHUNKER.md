@@ -80,7 +80,7 @@ qdrant_storage/
 
 ## Инкрементальные обновления
 
-`DocumentHasher` отслеживает SHA256 каждого файла. При запуске `update_database.py` заново индексируются только изменившиеся документы:
+`DocumentHasher` отслеживает SHA256 каждого файла. При запуске `process_documents.py` (или `process_documents.py --incremental`) заново индексируются только изменившиеся документы:
 
 ```python
 from src.rag.document_hasher import DocumentHasher
@@ -144,8 +144,5 @@ print(limiter.stats())
 
 | Скрипт | Назначение |
 |--------|-----------|
-| `scripts/process_documents.py` | Полный цикл: чанкинг + контекстуализация + векторизация |
-| `scripts/prepare_chunks.py` | Только чанкинг (с кэшем), без загрузки в Qdrant |
-| `scripts/update_database.py` | Только векторизация и загрузка в Qdrant (из кэша) |
-| `scripts/init_database.py` | Полная инициализация с нуля (без use_incremental_updates) |
+| `scripts/process_documents.py` | Полный цикл: чанкинг + контекстуализация + векторизация. Поддерживает параметры `--force` (полная инициализация базы), `--chunk-only` (только чанкинг без векторизации), `--incremental` (принудительное инкрементальное обновление) и `--clear-cache` (очистка кэша чанков). |
 | `scripts/evaluate_rag.py` | Оценка качества RAG (Recall@5, Recall@10, MRR, latency) |

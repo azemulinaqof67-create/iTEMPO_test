@@ -2,7 +2,8 @@
 # Базовые настройки берутся отсюда, можно переопределить через .env
 
 text_model:
-  api_version: null  # опционально
+  name: "gemini-3.5-flash"  # Переопределить через GEMINI_TEXT_MODEL в .env
+  api_version: "v1beta"
   generation:
     temperature: 0.3
     top_p: 0.95
@@ -12,10 +13,10 @@ text_model:
   safety:
     disabled: true
   fallbacks:
-    # Tier-1: пробуем первой при недоступности основной (gemini-3.1-flash-lite-preview)
-    - "gemma-3-27b-it"
+    # Tier-1: пробуем первой при недоступности основной (gemini-3.1-flash-lite)
+    - "gemini-3.1-flash-lite"
     # Tier-2: только если Tier-1 тоже недоступна
-    - "gemma-3-12b-it"
+    - "gemini-2.5-flash-lite"
   prompt:
     template: |
       Ты — корпоративный AI-ассистент холдинговой компании ТЭМПО.
@@ -65,6 +66,7 @@ text_model:
       {context}
 
 audio_model:
+  name: "gemini-2.5-flash-native-audio-latest"  # Переопределить через GEMINI_AUDIO_MODEL в .env
   api_version: "v1alpha"
   generation:
     temperature: 0.1
@@ -142,11 +144,76 @@ audio_model:
       {time_info}
 
   response_modfallbacks:
-    - "gemma-3-12b-it"
+    - "gemini-3.1-flash-lite"
 
 embedding_model:
+  name: "gemini-embedding-2"  # Переопределить через GEMINI_EMBEDDING_MODEL в .env
   api_version: "v1beta"
 
 contextual_retrieval:
+  model: "gemini-3.5-flash"  # Переопределить через CONTEXTUAL_TEXT_MODEL в .env
   max_doc_chars: 12000
   parallelism: 4
+
+# ============================================
+# ВЕКТОРНОЕ ХРАНИЛИЩЕ QDRANT
+# ============================================
+qdrant:
+  storage_path: "qdrant_storage_v2"
+  collection_name: "documents_v2"
+  vector_size: 3072
+  document_hashes_path: "qdrant_storage_v2/document_hashes.json"
+
+# ============================================
+# ПАРАМЕТРЫ RAG PIPELINE
+# ============================================
+rag:
+  chunk_size: 1000
+  chunk_overlap: 200
+  search_limit: 10
+  fetch_limit: 40
+  use_contextual_retrieval: false
+  use_hybrid_search: true
+  use_rag_fusion: true
+  use_llm_rerank: true
+  use_fallback: true
+  use_parent_child_chunks: true
+  use_incremental_updates: true
+  enable_metrics: true
+  use_semantic_chunking: false
+  contextual_max_doc_chars: 12000
+  contextual_parallelism: 4
+  vector_fetch_limit: 250
+  bm25_fetch_limit: 250
+  fusion_fetch_limit: 40
+  rrf_k: 60
+  query_variations: 3
+  rerank_top_k: 25
+  rerank_max_docs: 50
+  rerank_doc_chars: 1000
+  semantic_chunk_size: 1000
+  semantic_similarity_threshold: 0.75
+  parent_chunk_size: 6000
+  child_chunk_size: 400
+  bm25_min_token_len: 2
+
+# ============================================
+# ПАМЯТЬ ДИАЛОГА (CHAT HISTORY)
+# ============================================
+memory:
+  chat_history_enabled: true
+  chat_history_db_path: "chat_history.db"
+  max_history_messages: 20
+  summarization_threshold: 50
+  max_context_tokens: 8000
+  enable_auto_summarization: true
+
+# ============================================
+# ОБЩИЕ НАСТРОЙКИ ПРИЛОЖЕНИЯ
+# ============================================
+app:
+  admin_enabled: true
+  admin_port: 8080
+  default_city: "Набережные Челны"
+  enable_document_sender: true
+

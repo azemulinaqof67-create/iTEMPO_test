@@ -4,7 +4,9 @@
 Единая команда для всего процесса.
 """
 
+import argparse
 import asyncio
+import logging
 import os
 import sys
 from pathlib import Path
@@ -15,6 +17,21 @@ sys.path.insert(0, str(project_root))
 
 # Автоматическая настройка прокси из .env
 load_dotenv()
+
+# Настройка кодировки для корректного вывода кириллицы в Windows
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
+# Настройка уровня логирования из переменной окружения LOG_LEVEL
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=log_level
+)
+
 proxy_url = os.getenv("BOT_HTTPS_PROXY") or os.getenv("HTTPS_PROXY")
 force_proxy = os.getenv("BOT_FORCE_PROXY") or os.getenv("FORCE_PROXY")
 
@@ -33,6 +50,13 @@ from src.rag.ingestion.embeddings import EmbeddingService  # noqa: E402
 
 
 async def main():
+    parser = argparse.ArgumentParser(description="Полный цикл обработки документов: подготовка чанков + векторизация.")
+    parser.add_argument("--chunk-only", "-c", action="store_true", help="Только подготовка чанков (без векторизации и загрузки в базу)")
+    parser.add_argument("--force", "-f", action="store_true", help="Принудительное полное обновление базы (игнорировать инкрементальный режим)")
+    parser.add_argument("--incremental", "-i", action="store_true", help="Принудительное инкрементальное обновление")
+    parser.add_argument("--clear-cache", action="store_true", help="Очистить кэш чанков перед запуском")
+    args = parser.parse_args()
+
     try:
         config = Config.from_env()
     except Exception as e:
@@ -55,16 +79,23 @@ async def main():
         print(f"Проверьте папку: {config.data_path}")
         return
 
-    print(f"\nНайдено документов: {len(files)}")
+    print(f"\nНайдено документов всего: {len(files)}")
+
+    # Настройка инкрементального режима
+    use_incremental = config.use_incremental_updates
+    if args.force:
+        use_incremental = False
+    elif args.incremental:
+        use_incremental = True
 
     # Инкрементальное обновление
     hasher = DocumentHasher(config)
-    if config.use_incremental_updates:
+    if use_incremental:
         changed_files = [f for f in files if hasher.has_changed(f)]
         if not changed_files:
             print("\n[OK] Изменений не найдено. База актуальна.")
             return
-        print(f"Изменённых документов: {len(changed_files)}")
+        print(f"Изменённых документов для обработки: {len(changed_files)}")
         files = changed_files
 
     # ========================================
@@ -76,6 +107,10 @@ async def main():
 
     cache_dir = Path(config.data_path) / ".chunks_cache"
     chunks_cache = ChunksCache(cache_dir)
+
+    if args.clear_cache:
+        print("Очистка кэша чанков...")
+        chunks_cache.clear_cache()
 
     def make_chunker(proc: DocumentProcessor):
         """Создаёт функцию chunking без проблем с замыканием."""
@@ -92,6 +127,12 @@ async def main():
     for idx, file_path in enumerate(files, 1):
         print(f"\n[{idx}/{len(files)}] {file_path.name}")
         file_chunks = chunks_cache.get_or_create(file_path, chunker_fn)
+        # Обогащаем чанки тегами из пути на случай, если они загружены из старого кэша
+        for chunk in file_chunks:
+            source = chunk.get("source", "")
+            if source and "doc_type" not in chunk:
+                tags = processor.extract_tags(source)
+                chunk.update(tags)
         all_chunks.extend(file_chunks)
 
     if not all_chunks:
@@ -114,6 +155,16 @@ async def main():
         contextualizer = ContextualChunker(config)
         chunks = await contextualizer.contextualize_chunks(chunks)
 
+    if args.chunk_only:
+        print("\n" + "=" * 60)
+        print("[OK] ПОДГОТОВКА ЧАНКОВ ЗАВЕРШЕНА (--chunk-only)")
+        print("=" * 60)
+        
+        # Закрытие клиентов
+        from src.core.clients import ClientManager
+        ClientManager.get_instance(config).close_all()
+        return
+
     # ========================================
     # ЭТАП 2: ВЕКТОРИЗАЦИЯ
     # ========================================
@@ -123,7 +174,7 @@ async def main():
 
     embedding_service = EmbeddingService(config)
 
-    if config.use_incremental_updates:
+    if use_incremental:
         print("\nИнкрементальное обновление...")
         data_dir = Path(config.data_path)
         await embedding_service.incremental_update(
@@ -136,11 +187,15 @@ async def main():
     else:
         print("\nПолное обновление базы...")
         await embedding_service.update_database(chunks)
+        # Сохраняем хеши после полной инициализации, чтобы в следующий раз сработал инкремент
+        for f in processor.list_document_files():
+            hasher.update_hash(f)
+        hasher.save()
 
     # Закрытие клиентов
     from src.core.clients import ClientManager
 
-    ClientManager.get_instance().close_all()
+    ClientManager.get_instance(config).close_all()
 
     print("\n" + "=" * 60)
     print("[OK] ОБРАБОТКА ЗАВЕРШЕНА")

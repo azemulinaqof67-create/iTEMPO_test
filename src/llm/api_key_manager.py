@@ -7,7 +7,7 @@
 
 import logging
 import time
-from threading import Lock
+from threading import RLock
 from typing import List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,28 @@ class ApiKeyManager:
     - Автоматическое восстановление исчерпанных ключей через время
     """
 
+    # Классовые переменные для совместного использования состояния между всеми инстансами/потоками
+    _global_lock = RLock()
+    _global_exhausted_keys: Set[str] = set()
+    _global_current_index = 0
+    _global_last_reset_time = time.time()
+
+    @property
+    def _current_index(self) -> int:
+        return ApiKeyManager._global_current_index
+
+    @_current_index.setter
+    def _current_index(self, value: int):
+        ApiKeyManager._global_current_index = value
+
+    @property
+    def _last_reset_time(self) -> float:
+        return ApiKeyManager._global_last_reset_time
+
+    @_last_reset_time.setter
+    def _last_reset_time(self, value: float):
+        ApiKeyManager._global_last_reset_time = value
+
     def __init__(self, api_keys: List[str], reset_interval: int = 3600, auto_rotate: bool = False):
         """
         Args:
@@ -37,10 +59,8 @@ class ApiKeyManager:
         self.api_keys = api_keys
         self.reset_interval = reset_interval
         self.auto_rotate = auto_rotate
-        self._current_index = 0
-        self._exhausted_keys: Set[str] = set()
-        self._last_reset_time = time.time()
-        self._lock = Lock()
+        self._lock = ApiKeyManager._global_lock
+        self._exhausted_keys = ApiKeyManager._global_exhausted_keys
 
         logger.info(f"ApiKeyManager инициализирован с {len(api_keys)} ключами, auto_rotate={auto_rotate}")
 
@@ -85,7 +105,7 @@ class ApiKeyManager:
                     if next_key not in self._exhausted_keys:
                         # Found available key
                         masked_key = self.get_masked_key(next_key)
-                        logger.info(f"Key auto-rotated to: {masked_key} (Index: {self._current_index})")
+                        logger.debug(f"Key auto-rotated to: {masked_key} (Index: {self._current_index})")
                         return next_key
                     
                     attempts += 1
@@ -98,7 +118,7 @@ class ApiKeyManager:
             
             # Return current key if it's available
             masked_key = self.get_masked_key(current_key)
-            logger.info(f"Using API key: {masked_key} (Index: {self._current_index})")
+            logger.debug(f"Using API key: {masked_key} (Index: {self._current_index})")
             return current_key
 
     def rotate_key(self, reason: str = "unknown") -> Optional[str]:
@@ -129,16 +149,16 @@ class ApiKeyManager:
                     masked_old = self.get_masked_key(current_key)
                     masked_new = self.get_masked_key(next_key)
                     if reason == "rate limit" or "429" in reason:
-                        logger.warning(f"⚠️ Лимит исчерпан. Переключаюсь на ключ №{self._current_index}: {masked_new}")
+                        logger.debug(f"⚠️ Лимит исчерпан. Переключаюсь на ключ №{self._current_index}: {masked_new}")
                     else:
-                        logger.warning(f"🔄 Переключение API ключа: {masked_old} → {masked_new} (причина: {reason})")
+                        logger.debug(f"🔄 Переключение API ключа: {masked_old} → {masked_new} (причина: {reason})")
                     return next_key
 
                 attempts += 1
 
             # Все ключи исчерпаны
             self.get_pool_health()
-            logger.error(
+            logger.debug(
                 f"❌ Все {len(self.api_keys)} API ключей исчерпаны! "
                 f"Следующий сброс через {self._time_until_reset():.0f} сек."
             )
@@ -156,7 +176,7 @@ class ApiKeyManager:
             if api_key in self.api_keys:
                 self._exhausted_keys.add(api_key)
                 masked = self.get_masked_key(api_key)
-                logger.warning(
+                logger.debug(
                     f"⚠️ Ключ {masked} помечен как исчерпанный "
                     f"(причина: {reason}). "
                     f"Исчерпано: {len(self._exhausted_keys)}/{len(self.api_keys)}"

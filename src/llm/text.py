@@ -85,6 +85,51 @@ class TextLLMService:
         model = self._get_full_model_name(model_name)
         return await client.aio.models.generate_content_stream(model=model, contents=contents, config=generation_config)
 
+    @staticmethod
+    def _parse_retry_delay(error_str: str, default: float = 10.0) -> float:
+        """
+        Извлекает retryDelay из текста ошибки 429.
+
+        Google возвращает задержку в формате:
+          'retryDelay': '31s'
+          Please retry in 31.008674714s.
+        """
+        import re
+
+        # Пробуем "Please retry in Xs"
+        match = re.search(r"retry in (\d+(?:\.\d+)?)s", error_str, re.IGNORECASE)
+        if match:
+            return min(float(match.group(1)), 60.0)  # cap 60s
+
+        # Пробуем "'retryDelay': 'Xs'"
+        match = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", error_str, re.IGNORECASE)
+        if match:
+            return min(float(match.group(1)), 60.0)
+
+        return default
+
+    @staticmethod
+    def _is_rpm_limit(error_lower: str) -> bool:
+        """
+        Определяет, является ли ошибка 429 лимитом в минуту (RPM), а не в день (RPD).
+
+        Google включает quotaId в текст ошибки, например:
+        - 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' → RPM
+        - 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' → RPD
+        """
+        # Приоритет: парсим quotaId (самый надёжный индикатор)
+        if "perminute" in error_lower:
+            return True
+        if "perday" in error_lower:
+            return False
+
+        # Вторичные индикаторы
+        if "daily" in error_lower or "rpd" in error_lower:
+            return False
+
+        # По умолчанию считаем RPM (безопаснее — подождём, а не сдадимся)
+        return True
+
     async def _retry_with_fallback(
         self,
         operation: Callable,
@@ -96,16 +141,24 @@ class TextLLMService:
         """
         Retry с fallback между API ключами (429) и моделями (503).
         Изолировано от глобального конфига для поддержки конкурентных запросов.
+
+        Стратегия обработки 429:
+        - RPM (лимит в минуту): asyncio.sleep(retryDelay), затем повтор с тем же ключом/моделью.
+          Ротация ключей бессмысленна, так как RPM — проектный лимит.
+        - RPD (дневной лимит): пометить модель как исчерпанную, ротация на fallback.
         """
         # Всегда начинаем с лучшей доступной модели на текущий момент
         current_model = initial_model
-        if not current_model and self.model_fallback_manager:
-            current_model = self.model_fallback_manager.get_best_available_model()
+        current_api_version = initial_api_version
+        if self.model_fallback_manager:
+            if not current_model or not self.model_fallback_manager.is_model_available(current_model):
+                current_model = self.model_fallback_manager.get_best_available_model()
+                # Сбрасываем версию API, чтобы получить правильную версию для fallback-модели
+                current_api_version = None
         if not current_model:
             current_model = self.config.text_model
 
         # Приоритет версии
-        current_api_version = initial_api_version
         if not current_api_version and self.model_fallback_manager:
             current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
         if not current_api_version:
@@ -114,8 +167,8 @@ class TextLLMService:
         last_error = None
 
         try:
-            # Add overall timeout for the entire retry cycle
-            overall_timeout = 120.0  # 2 minutes total
+            # Увеличен таймаут для батчевых операций, которые могут ждать RPM cooldown
+            overall_timeout = 600.0  # 10 минут
             start_time = time.time()
 
             for attempt in range(max_retries):
@@ -133,7 +186,7 @@ class TextLLMService:
 
                 try:
                     # Log current model and API version
-                    logger.info(
+                    logger.debug(
                         "Retry attempt %d/%d — модель: %s (API: %s)",
                         attempt + 1, max_retries, current_model, current_api_version,
                     )
@@ -142,9 +195,7 @@ class TextLLMService:
                     # Если модель не в словаре — используется DEFAULT_TIMEOUT.
                     MODEL_TIMEOUTS = {
                         "gemini-2.5-flash-lite": 40.0,          # стабильная, но может давать 20-35с при нагрузке
-                        "gemini-3.1-flash-lite-preview": 40.0,  # legacy preview
-                        "gemma-3-27b-it": 50.0,                 # tier-1 fallback
-                        "gemma-3-12b-it": 60.0,                 # tier-2 fallback
+                        "gemini-3.1-flash-lite": 40.0,          # стабильная версия
                     }
                     DEFAULT_TIMEOUT = 30.0
                     timeout = MODEL_TIMEOUTS.get(current_model, DEFAULT_TIMEOUT)
@@ -161,7 +212,7 @@ class TextLLMService:
                             self.model_fallback_manager.reset_to_primary()
                         return response, current_model
                     except asyncio.TimeoutError as te:
-                        logger.warning(
+                        logger.debug(
                             "⏰ Таймаут %.0fs для модели %s (попытка %d/%d) — переключаю на fallback",
                             timeout, current_model, attempt + 1, max_retries,
                         )
@@ -189,64 +240,165 @@ class TextLLMService:
                     error_lower = error_str.lower()
                     last_error = e
 
-                    # --- 429: Rate limit ---
-                    if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                    # --- 401/403: Authentication / Permission errors ---
+                    is_auth_error = (
+                        "401" in error_str
+                        or "403" in error_str
+                        or "unauthenticated" in error_lower
+                        or "permission_denied" in error_lower
+                        or "invalid" in error_lower
+                        or "not active" in error_lower
+                        or "deleted or disabled" in error_lower
+                    )
+                    if is_auth_error:
                         logger.warning(
-                            "Rate limit (429) для %s, попытка %d/%d",
-                            operation_name, attempt + 1, max_retries,
+                            "🔑 Ошибка авторизации (401/403) для API ключа (модель: %s): %s",
+                            current_model, error_str
                         )
                         akm = self.client_manager.api_key_manager
                         if akm:
-                            current_key = akm.get_current_key()
-                            akm.mark_key_exhausted(current_key, f"{operation_name} rate limit")
-
-                            if akm.is_all_exhausted():
-                                # Лимит НА УРОВНЕ МОДЕЛИ (free tier: общий для всех ключей).
-                                # Смена ключа не поможет — переключаемся на fallback-модель.
-                                logger.warning(
-                                    "⛔ Все %d ключей исчерпаны для модели %s.",
-                                    len(akm.api_keys), current_model,
+                            # Помечаем ключ как исчерпанный
+                            akm.mark_key_exhausted(current_api_key, f"auth error: {error_str}")
+                            # Ротируем на следующий ключ
+                            new_key = akm.rotate_key(f"auth error: {error_str}")
+                            if new_key:
+                                logger.debug(
+                                    "🔄 Ошибка авторизации: Переключаюсь на следующий API ключ: %s",
+                                    akm.get_masked_key(new_key)
                                 )
-                                # DEBUG: Выводим полный текст ошибки, чтобы знать точные слова Google
-                                logger.info(f"🔍 [429 DEBUG] Полный текст ошибки от Google: {error_str}")
-
-                                if self.model_fallback_manager:
-                                    # Анализируем: лимит в минуту или в день?
-                                    # "quota" слишком общее слово, ищем более близкие к RPD (PerDay)
-                                    is_daily = "perday" in error_lower or "daily" in error_lower or "rpd" in error_lower
-                                    if is_daily:
-                                        self.model_fallback_manager.mark_model_daily_exhausted(current_model)
-                                    else:
-                                        self.model_fallback_manager.mark_model_rpm_limit(current_model)
-
-                                    new_model = self.model_fallback_manager.rotate_model(
-                                        current_model, "rate limit reached"
-                                    )
-                                    if new_model:
-                                        current_model = new_model
-                                        current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
-                                        akm.reset_exhausted_keys()
-                                        logger.warning(
-                                            "🔄 Переключаюсь на тир ниже -> %s (API: %s)",
-                                            new_model, current_api_version,
-                                        )
-                                        continue
-                                raise LLMError(
-                                    f"Все ключи и модели исчерпаны для {operation_name}."
-                                ) from e
-                            else:
-                                # Ещё есть свободные ключи — пробуем следующий
-                                logger.info("🔑 Ключ помечен как исчерпанный, ротирую на следующий...")
                                 continue
-                        else:
-                            # ApiKeyManager отсутствует — сразу на fallback-модель
+                        raise LLMError(f"Ошибка авторизации API: {error_str}") from e
+
+                    # --- 429: Rate limit ---
+                    if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                        is_rpm = self._is_rpm_limit(error_lower)
+                        retry_delay = self._parse_retry_delay(error_str, default=15.0)
+
+                        if is_rpm:
+                            # =============================================
+                            # RPM (лимит в минуту) — ждём и повторяем.
+                            # Ротация ключей бессмысленна: RPM — проектный лимит,
+                            # общий для всех ключей одного проекта.
+                            # =============================================
+                            logger.debug(
+                                "⏳ RPM лимит для %s (модель: %s, retry_delay: %.0fs), попытка %d/%d",
+                                operation_name, current_model, retry_delay, attempt + 1, max_retries,
+                            )
+
+                            # Помечаем текущую модель на кулдаун ПЕРЕД ротацией
                             if self.model_fallback_manager:
-                                new_model = self.model_fallback_manager.rotate_model("rate limit, no key manager")
+                                self.model_fallback_manager.mark_model_rpm_limit(current_model, int(retry_delay))
+
+                                # Пробуем переключиться на доступную модель
+                                new_model = self.model_fallback_manager.rotate_model(
+                                    current_model, f"RPM limit, retry in {retry_delay:.0f}s"
+                                )
+                                if new_model:
+                                    # Есть доступная модель — переключаемся без ожидания
+                                    current_model = new_model
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
+                                    akm = self.client_manager.api_key_manager
+                                    if akm:
+                                        akm.reset_exhausted_keys()
+                                    logger.debug(
+                                        "🔄 RPM: переключаюсь на доступную модель %s (API: %s)",
+                                        new_model, current_api_version,
+                                    )
+                                    continue
+
+                                # Все модели заблокированы — ждём минимальный cooldown
+                                wait_time = self.model_fallback_manager.get_min_cooldown_wait()
+                                if wait_time is not None and wait_time > 0:
+                                    logger.info(
+                                        "💤 Все модели в RPM кулдауне. Жду %.0fs...",
+                                        wait_time,
+                                    )
+                                    await asyncio.sleep(wait_time)
+                                    akm = self.client_manager.api_key_manager
+                                    if akm:
+                                        akm.reset_exhausted_keys()
+                                    # После сна пересчитываем лучшую модель
+                                    current_model = self.model_fallback_manager.get_best_available_model()
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    continue
+                                elif wait_time == 0.0:
+                                    # Есть доступная модель (ситуация гонки с другими задачами)
+                                    current_model = self.model_fallback_manager.get_best_available_model()
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    akm = self.client_manager.api_key_manager
+                                    if akm:
+                                        akm.reset_exhausted_keys()
+                                    continue
+
+                            # Нет model_fallback_manager или все в RPD — ждём и пробуем тот же
+                            logger.info(
+                                "💤 Нет fallback-моделей. Жду %.0fs перед повтором...",
+                                retry_delay,
+                            )
+                            await asyncio.sleep(retry_delay)
+                            akm = self.client_manager.api_key_manager
+                            if akm:
+                                akm.reset_exhausted_keys()
+                            continue
+                        else:
+                            # =============================================
+                            # RPD (дневной лимит) — модель исчерпана на сегодня.
+                            # Помечаем и переключаемся на fallback.
+                            # =============================================
+                            logger.debug(
+                                "🚫 RPD лимит (дневной) для модели %s, попытка %d/%d",
+                                current_model, attempt + 1, max_retries,
+                            )
+
+                            akm = self.client_manager.api_key_manager
+                            if akm:
+                                # Помечаем ключ как исчерпанный для этой модели
+                                akm.mark_key_exhausted(current_api_key, f"RPD limit on {current_model}")
+                                # Пытаемся найти следующий доступный ключ
+                                new_key = akm.rotate_key(f"RPD limit on {current_model}")
+                                if new_key:
+                                    logger.debug(
+                                        "🔄 RPD: Переключаюсь на следующий API ключ: %s для модели %s",
+                                        akm.get_masked_key(new_key), current_model
+                                    )
+                                    continue
+
+                            # Если ключи исчерпаны (или их нет), помечаем модель как daily exhausted и переключаемся на fallback
+                            if self.model_fallback_manager:
+                                self.model_fallback_manager.mark_model_daily_exhausted(current_model)
+
+                                new_model = self.model_fallback_manager.rotate_model(
+                                    current_model, "RPD daily limit reached on all keys"
+                                )
                                 if new_model:
                                     current_model = new_model
                                     current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
+                                    if akm:
+                                        akm.reset_exhausted_keys()
+                                    logger.debug(
+                                        "🔄 RPD: переключаюсь на fallback -> %s (API: %s)",
+                                        new_model, current_api_version,
+                                    )
                                     continue
-                            raise LLMError(f"Лимит исчерпан, нет fallback: {operation_name}") from e
+
+                                # Все модели заблокированы. Проверяем, есть ли RPM-кулдауны.
+                                # Если есть — стоит подождать (RPM кулдаун < 1 мин).
+                                wait_time = self.model_fallback_manager.get_min_cooldown_wait()
+                                if wait_time is not None and wait_time > 0:
+                                    logger.info(
+                                        "💤 Все модели заблокированы, но есть RPM-кулдаун (%.0fs). Жду...",
+                                        wait_time,
+                                    )
+                                    await asyncio.sleep(wait_time)
+                                    current_model = self.model_fallback_manager.get_best_available_model()
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    if akm:
+                                        akm.reset_exhausted_keys()
+                                    continue
+
+                            raise LLMError(
+                                f"Дневной лимит исчерпан для всех моделей: {operation_name}."
+                            ) from e
 
                     # --- Server errors / Bad Request / Not Found: switch model ---
                     error_lower = error_str.lower()
@@ -265,6 +417,10 @@ class TextLLMService:
                     )
 
                     if is_rotation_trigger and self.model_fallback_manager:
+                        # Помечаем модель на короткий RPM кулдаун при 503/недоступности
+                        cooldown_secs = 10 if ("503" in error_str or "unavailable" in error_lower) else 15
+                        self.model_fallback_manager.mark_model_rpm_limit(current_model, cooldown_secs)
+
                         new_model = self.model_fallback_manager.rotate_model(
                             current_model, f"503/error: {operation_name}"
                         )
@@ -275,6 +431,22 @@ class TextLLMService:
                             if akm:
                                 akm.reset_exhausted_keys()
                             continue
+
+                        # Если все модели оказались заблокированы/в кулдауне, ждем перед повтором
+                        wait_time = self.model_fallback_manager.get_min_cooldown_wait()
+                        if wait_time is not None and wait_time > 0:
+                            logger.info(
+                                "💤 Все модели перегружены или недоступны (503). Жду %.0fs перед повторной попыткой...",
+                                wait_time
+                            )
+                            await asyncio.sleep(wait_time)
+                            akm = self.client_manager.api_key_manager
+                            if akm:
+                                akm.reset_exhausted_keys()
+                            current_model = self.model_fallback_manager.get_best_available_model()
+                            current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                            continue
+
                         raise LLMError(f"Все модели перегружены: {operation_name}") from e
 
                     raise LLMError(f"Ошибка {operation_name}: {e}") from e

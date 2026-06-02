@@ -30,7 +30,9 @@ from src.core.exceptions import AssistantError
 from src.rag.ingestion.document_processor import DocumentProcessor
 from src.rag.ingestion.embeddings import EmbeddingService
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+import os
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=log_level)
 logger = logging.getLogger(__name__)
 
 

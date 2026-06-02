@@ -7,20 +7,20 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
-
-logger = logging.getLogger(__name__)
+from typing import Any, Dict, List, Optional
 
 from src.core.clients import ClientManager
 from src.core.config import Config
 from src.core.exceptions import SearchError
-from src.rag.retrieval.crag import CRAGEvaluator
+from src.core.prompt_manager import PromptManager
+from src.rag.retrieval.fallback import FallbackRetriever
 from src.rag.retrieval.hybrid_search import HybridSearchService
-from src.rag.retrieval.hyde import HyDERetriever
 from src.rag.retrieval.metrics import MetricsCollector
 from src.rag.retrieval.rag_fusion import RAGFusion
 from src.rag.retrieval.reranker import LLMReranker
 from src.rag.retrieval.smart_links_retriever import SmartLinksRetriever
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,20 +42,29 @@ class SearchResult:
 class SearchService:
     """Аsync поисковая служба с современным pipeline."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, prompt_manager: Optional[PromptManager] = None):
         self.config = config
+        self.prompt_manager = prompt_manager or PromptManager.get_instance()
         self.client_manager = ClientManager.get_instance(config)
         self.hybrid = HybridSearchService(config)
-        self.fusion = RAGFusion(config, self.hybrid)
-        self.reranker = LLMReranker(config)
-        self.crag = CRAGEvaluator(config)
-        self.hyde = HyDERetriever(config, self.hybrid)
+        self.fusion = RAGFusion(config, self.hybrid, self.prompt_manager)
+        self.reranker = LLMReranker(config, self.prompt_manager)
+        self.fallback = FallbackRetriever(config, self.hybrid, self.prompt_manager)
         self.metrics = MetricsCollector(config)
+        self.smart_links = SmartLinksRetriever(config)
+
     async def initialize(self):
         """Явная инициализация всех компонентов поиска."""
         await self.hybrid.initialize()
 
-    async def search(self, query: str, limit: int = None, company_id: Optional[str] = None, qdrant_filter: Optional[Any] = None, intent: Optional[str] = None) -> SearchResult:
+    async def search(
+        self,
+        query: str,
+        limit: Optional[int] = None,
+        company_id: Optional[str] = None,
+        qdrant_filter: Optional[Any] = None,
+        intent: Optional[str] = None,
+    ) -> SearchResult:
         """
         Основной метод поиска.
 
@@ -69,40 +78,57 @@ class SearchService:
         retrieval_status: Optional[str] = None
 
         try:
+            # 1. Проактивный поиск
             if self.config.use_rag_fusion:
-                candidates = await self.fusion.search_with_fusion(query, limit=self.config.rerank_max_docs, company_id=company_id)
+                candidates = await self.fusion.search_with_fusion(
+                    query, limit=self.config.rerank_max_docs, company_id=company_id
+                )
             else:
-                candidates = await self.hybrid.search(query, limit=self.config.rerank_max_docs, company_id=company_id, qdrant_filter=qdrant_filter, intent=intent)
+                candidates = await self.hybrid.search(
+                    query,
+                    limit=self.config.rerank_max_docs,
+                    company_id=company_id,
+                    qdrant_filter=qdrant_filter,
+                    intent=intent,
+                )
 
-            if self.config.use_llm_rerank:
-                candidates = await self.reranker.rerank_batch(query, candidates, top_k=self.config.rerank_top_k)
-
-            if self.config.use_crag:
-                candidates, retrieval_status = await self.crag.evaluate_and_correct(query, candidates, self.hybrid)
-
-            if self.config.use_hyde and retrieval_status in {
-                "incorrect",
-                "refined",
-                "ambiguous",
-                "empty",
-            }:
-                candidates = await self.hyde.search_with_hyde(query, limit=self.config.rerank_max_docs, company_id=company_id)
-                if self.config.use_llm_rerank:
-                    candidates = await self.reranker.rerank_batch(query, candidates, top_k=self.config.rerank_top_k)
-
-            # Дедупликация: если используем parent_text, нам не нужны дубликаты одного и того же файла в контексте
+            # 2. Дедупликация (до реранкера)
             unique_candidates = []
             seen_ids = set()
             for cand in candidates:
-                # Приоритет: parent_id -> source
                 p_id = cand.get("parent_id") or cand.get("source")
                 if p_id not in seen_ids:
                     unique_candidates.append(cand)
                     seen_ids.add(p_id)
-            
-            # Ограничиваем количество результатов
-            documents = unique_candidates[:limit]
-            
+            candidates = unique_candidates
+
+            # 3. Оценка и сортировка
+            if self.config.use_llm_rerank:
+                candidates, retrieval_status = await self.reranker.rerank_batch(
+                    query, candidates, top_k=self.config.rerank_top_k
+                )
+
+            # 4. Реактивный фоллбэк
+            is_empty = not candidates
+            is_incorrect = retrieval_status is not None and retrieval_status.upper() == "INCORRECT"
+
+            if self.config.use_fallback and (is_empty or is_incorrect):
+                fallback_docs = await self.fallback.execute_fallback(
+                    query, limit=self.config.rerank_max_docs, company_id=company_id
+                )
+                # Добавляем в конец списка candidates с дедупликацией
+                for doc in fallback_docs:
+                    p_id = doc.get("parent_id") or doc.get("source")
+                    if p_id not in seen_ids:
+                        candidates.append(doc)
+                        seen_ids.add(p_id)
+                # Если fallback вернул документы, обновляем статус на correct
+                if fallback_docs:
+                    retrieval_status = "correct"
+
+            # 5. Форматирование результатов и обработка smart_links
+            documents = candidates[:limit]
+
             # Форматируем результаты (превращаем в строки с заголовками)
             formatted = self._format_results(documents, limit)
             combined = "\n".join(formatted)
@@ -182,10 +208,10 @@ class SearchService:
         for cand in candidates[:limit]:
             text = self._select_text(cand)
             title = cand.get("metadata", {}).get("title") or cand.get("title", "Документ без названия")
-            
+
             # Используем более человекопонятный заголовок вместо пути к файлу
             header = f"=== СОДЕРЖИМОЕ ДОКУМЕНТА: {title} ==="
-            
+
             results.append(f"{header}\n{text}\n")
         return results
 
@@ -193,13 +219,15 @@ class SearchService:
         """Выбор текста для LLM (parent chunk при наличии)."""
         parent_text = candidate.get("parent_text")
         source = candidate.get("source", "Unknown")
-        
-        logger.info(f"DEBUG: Candidate from {source}. Has parent_text: {parent_text is not None}, len: {len(parent_text) if parent_text else 0}")
-        
+
+        logger.info(
+            f"DEBUG: Candidate from {source}. Has parent_text: {parent_text is not None}, len: {len(parent_text) if parent_text else 0}"
+        )
+
         # Если parent_text есть (даже если это пустая строка, хотя это странно)
         # мы должны использовать его, если включен режим parent-child.
         # Но на практике мы проверяем наличие контента.
         if self.config.use_parent_child_chunks and parent_text and len(parent_text) > 0:
             return parent_text
-            
+
         return candidate.get("text", "")

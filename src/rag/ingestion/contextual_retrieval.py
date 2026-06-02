@@ -39,7 +39,21 @@ class ContextualChunker:
         if not chunks:
             return chunks
 
-        tasks = [self._contextualize_one(chunk) for chunk in chunks]
+        total = len(chunks)
+        completed = 0
+        lock = asyncio.Lock()
+
+        async def _contextualize_with_progress(chunk: Dict) -> Dict:
+            nonlocal completed
+            res = await self._contextualize_one(chunk)
+            async with lock:
+                completed += 1
+                if completed % 10 == 0 or completed == total:
+                    percent = (completed / total) * 100
+                    print(f"⏳ [Контекстуализация] Обработано {completed}/{total} чанков ({percent:.1f}%)")
+            return res
+
+        tasks = [_contextualize_with_progress(chunk) for chunk in chunks]
         return await asyncio.gather(*tasks)
 
     async def _contextualize_one(self, chunk: Dict) -> Dict:

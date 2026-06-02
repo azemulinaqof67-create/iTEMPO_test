@@ -2,70 +2,79 @@
 LLM-based reranker (cross-encoder style).
 """
 
-from typing import Dict, List
+import logging
+from typing import Dict, List, Literal, Tuple
+from pydantic import BaseModel, Field
 
 from src.core.config import Config
+from src.core.prompt_manager import PromptManager
 from src.llm.text import TextLLMService
+
+logger = logging.getLogger(__name__)
+
+
+class RerankerOutput(BaseModel):
+    """Схема ответа реранкера."""
+    order: List[int] = Field(
+        description="Индексы наиболее релевантных документов в порядке убывания их полезности."
+    )
+    status: Literal["CORRECT", "INCORRECT"] = Field(
+        description="'CORRECT' если в документах есть ответ или полезная информация, иначе 'INCORRECT'."
+    )
 
 
 class LLMReranker:
     """Cross-encoder reranking через LLM."""
 
-    BATCH_RERANK_PROMPT = """Твоя задача — отобрать наиболее релевантные документы для ответа на запрос пользователя.
-Верни номера документов в порядке убывания их полезности, разделенные запятой.
-
-ПРАВИЛА ОЦЕНКИ:
-1. ВЫСОКАЯ релевантность: Документ прямо отвечает на вопрос или содержит точные данные (ФИО, телефон, адрес, пункт приказа).
-2. СРЕДНЯЯ релевантность: Документ описывает общую тему запроса, но не содержит прямого ответа.
-3. НИЗКАЯ релевантность (ШУМ): Документ содержит те же слова, но относится к другой теме (например, вопрос про автобус, а документ про базу отдыха, где просто упоминается парковка автобуса).
-
-ПРИМЕРЫ:
-Запрос: "Как вызвать айтишника?"
-Документы: [1] Как создать заявку в HelpDesk [2] Биография директора Айти ТЭМПО [3] Ремонт компьютеров.
-Результат: 1, 3, 2
-
-Запрос: {query}
-
-ДОКУМЕНТЫ ДЛЯ АНАЛИЗА:
-{documents}
-
-ПОРЯДОК (только номера через запятую, например 3, 1, 5):"""
-
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, prompt_manager: PromptManager):
         self.config = config
+        self.prompt_manager = prompt_manager
         self.llm = TextLLMService(config)
 
-    async def rerank_batch(self, query: str, documents: List[Dict], top_k: int) -> List[Dict]:
+    async def rerank_batch(self, query: str, documents: List[Dict], top_k: int) -> Tuple[List[Dict], str]:
         """Batch reranking через один LLM вызов."""
-        if len(documents) <= top_k:
-            return documents
+        if not documents:
+            return [], "incorrect"
 
-        docs_text = "\n\n".join(
-            [
-                f"[{i + 1}] {doc.get('text', '')[: self.config.rerank_doc_chars]}"
-                for i, doc in enumerate(documents[: self.config.rerank_max_docs])
-            ]
-        )
+        docs_list = []
+        for i, doc in enumerate(documents[: self.config.rerank_max_docs]):
+            metadata = doc.get("metadata") or {}
+            system_hints = metadata.get("system_hints", [])
+            hints_str = ""
+            if system_hints and isinstance(system_hints, list):
+                hints_str = f"(Подсказка системы: {', '.join(system_hints)}) "
+            
+            doc_text = doc.get('text', '')[: self.config.rerank_doc_chars]
+            docs_list.append(f"[{i}] {hints_str}{doc_text}")
 
-        response = await self.llm.generate(
-            self.BATCH_RERANK_PROMPT.format(query=query, documents=docs_text),
-            temperature=0.1,
-        )
+        docs_text = "\n\n".join(docs_list)
 
-        order = self._parse_order(response, len(documents))
-        if not order:
-            return documents[:top_k]
+        try:
+            prompt_template = self.prompt_manager.get_prompt("reranker")
+            response = await self.llm.generate_structured(
+                prompt=prompt_template.format(query=query, documents=docs_text),
+                response_schema=RerankerOutput,
+                temperature=0.1,
+            )
+            order = response.order
+            status = response.status.strip().lower()
+        except Exception as e:
+            logger.warning(f"Reranking failed, using original order: {e}")
+            order = list(range(len(documents)))
+            status = "correct"
 
-        reranked = [documents[i] for i in order if 0 <= i < len(documents)]
-        return reranked[:top_k]
+        # Восстанавливаем порядок
+        reranked: List[Dict] = []
+        seen = set()
+        for idx in order:
+            if 0 <= idx < len(documents) and idx not in seen:
+                reranked.append(documents[idx])
+                seen.add(idx)
 
-    @staticmethod
-    def _parse_order(response: str, max_docs: int) -> List[int]:
-        parts = [p.strip() for p in response.replace("\n", "").split(",")]
-        order: List[int] = []
-        for p in parts:
-            if p.isdigit():
-                idx = int(p) - 1
-                if 0 <= idx < max_docs and idx not in order:
-                    order.append(idx)
-        return order
+        # Добавляем упущенные документы
+        for i, doc in enumerate(documents):
+            if i not in seen:
+                reranked.append(doc)
+
+        return reranked[:top_k], status
+

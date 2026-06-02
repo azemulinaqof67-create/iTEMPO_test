@@ -3,15 +3,9 @@
 """
 
 import logging
-from threading import Lock
-from typing import Dict, Optional
-
-logger = logging.getLogger(__name__)
-
-
 import time
-from threading import Lock
-from typing import Dict, List, Optional
+from threading import RLock
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -30,32 +24,40 @@ MODEL_API_VERSIONS: Dict[str, str] = {
     "gemini-2.0-flash-lite-preview": "v1beta",
     "gemini-2.5-flash": "v1beta",
     "gemini-2.5-flash-lite": "v1beta",
-    "gemini-3.1-flash-lite-preview": "v1beta",
-    "gemma-3-27b-it": "v1beta",
-    "gemma-3-12b-it": "v1beta",
+    "gemini-3.1-flash-lite": "v1beta",
+    "gemini-3.5-flash": "v1beta",
 }
+
+# Порог cooldown для разделения RPM/RPD (секунды).
+# Cooldowns <= этого значения считаются RPM (короткие), > — RPD (длинные).
+_RPM_COOLDOWN_THRESHOLD = 3600  # 1 час
 
 
 class ModelFallbackManager:
     """
     Менеджер для переключения между текстовыми моделями с учетом кулдаунов.
+
+    Различает два типа кулдаунов:
+    - RPM (per-minute): короткий (30-60с), стоит подождать
+    - RPD (daily): длинный (12ч), модель исчерпана на сегодня
     """
+
+    # Классовые переменные для совместного использования состояния кулдаунов всеми инстансами
+    _global_cooldowns: Dict[str, float] = {}
+    _global_lock = RLock()
 
     def __init__(self, primary_model: str, fallback_models: List[str]):
         self.primary_model = primary_model
         self.fallback_models = fallback_models
 
         # Полный список моделей в порядке приоритета
-        self.all_models = []
+        self.all_models: List[str] = []
         for model in [primary_model] + fallback_models:
             if model not in self.all_models:
                 self.all_models.append(model)
 
-        self._lock = Lock()
-        # Время, до которого модель заблокирована (timestamp)
-        self._cooldowns: Dict[str, float] = {}
-        # Индекс текущей модели (для ротации внутри ОДНОГО запроса)
-        self._current_session_index = 0
+        self._lock = ModelFallbackManager._global_lock
+        self._cooldowns = ModelFallbackManager._global_cooldowns
 
         logger.info("📋 ModelFallbackManager инициализирован с поддержкой кулдаунов.")
 
@@ -69,26 +71,66 @@ class ModelFallbackManager:
                 unlock_time = self._cooldowns.get(model, 0)
                 if now >= unlock_time:
                     return model
-            
-            # Если все в кулдауне, берем ту, у которой кулдаун кончится раньше всего
-            if self._cooldowns:
-                best_model = min(self._cooldowns, key=self._cooldowns.get)
-                return best_model
-            
+
+            # Если все в кулдауне, берем ту с кратчайшим RPM кулдауном
+            # (RPD модели не рассматриваются — они исчерпаны на сегодня)
+            rpm_models = []
+            for model in self.all_models:
+                unlock_time = self._cooldowns.get(model, 0)
+                remaining = unlock_time - now
+                if remaining <= _RPM_COOLDOWN_THRESHOLD:
+                    rpm_models.append((remaining, model))
+
+            if rpm_models:
+                rpm_models.sort(key=lambda x: x[0])
+                return rpm_models[0][1]
+
+            # Если все в RPD кулдауне — возвращаем primary (будет RPD ошибка)
             return self.primary_model
 
     def mark_model_rpm_limit(self, model_name: str, seconds: int = 60):
         """Пометить модель как временно недоступную (лимит в минуту)."""
         with self._lock:
             self._cooldowns[model_name] = time.time() + seconds
-            logger.warning(f"⏳ Модель {model_name} на кулдауне (RPM) на {seconds}с")
+            logger.debug(f"⏳ Модель {model_name} на кулдауне (RPM) на {seconds}с")
 
     def mark_model_daily_exhausted(self, model_name: str):
         """Пометить модель как исчерпанную на сегодня (дневной лимит)."""
         with self._lock:
             # Блокируем на 12 часов (или до рестарта)
             self._cooldowns[model_name] = time.time() + (12 * 3600)
-            logger.error(f"🚫 Модель {model_name} ИСЧЕРПАНА на сегодня (RPD limit)")
+            logger.debug(f"🚫 Модель {model_name} ИСЧЕРПАНА на сегодня (RPD limit)")
+
+    def is_model_available(self, model_name: str) -> bool:
+        """Проверить, доступна ли модель (нет кулдауна)."""
+        with self._lock:
+            return time.time() >= self._cooldowns.get(model_name, 0)
+
+    def is_model_daily_exhausted(self, model_name: str) -> bool:
+        """Проверить, исчерпана ли модель на сегодня (RPD)."""
+        with self._lock:
+            unlock_time = self._cooldowns.get(model_name, 0)
+            remaining = unlock_time - time.time()
+            return remaining > _RPM_COOLDOWN_THRESHOLD
+
+    def get_min_cooldown_wait(self) -> Optional[float]:
+        """
+        Получить минимальное время ожидания до разблокировки хотя бы одной RPM-модели.
+        Возвращает None если есть доступная модель или все в RPD.
+        """
+        with self._lock:
+            now = time.time()
+            min_wait = None
+            for model in self.all_models:
+                unlock_time = self._cooldowns.get(model, 0)
+                remaining = unlock_time - now
+                if remaining <= 0:
+                    return 0.0  # Есть доступная модель
+                if remaining <= _RPM_COOLDOWN_THRESHOLD:
+                    # Это RPM cooldown — стоит подождать
+                    if min_wait is None or remaining < min_wait:
+                        min_wait = remaining
+            return min_wait
 
     def get_api_version_for_model(self, model_name: str) -> str:
         if model_name in MODEL_API_VERSIONS:
@@ -101,24 +143,25 @@ class ModelFallbackManager:
     def rotate_model(self, current_model: str, reason: str = "error") -> Optional[str]:
         """
         Используется во время ретраев внутри одного запроса.
-        Возвращает следующую доступную модель.
+        Возвращает следующую доступную модель (не в cooldown).
+        Возвращает None если все модели заблокированы.
         """
         with self._lock:
             try:
                 idx = self.all_models.index(current_model)
-                # Ищем следующую незаблокированную
-                now = time.time()
-                for i in range(1, len(self.all_models)):
-                    next_idx = (idx + i) % len(self.all_models)
-                    candidate = self.all_models[next_idx]
-                    if now >= self._cooldowns.get(candidate, 0):
-                        return candidate
-                
-                # Если все заблокированы, просто берем следующую по кругу
-                next_idx = (idx + 1) % len(self.all_models)
-                return self.all_models[next_idx]
             except ValueError:
-                return self.primary_model
+                idx = 0
+
+            now = time.time()
+            for i in range(1, len(self.all_models)):
+                next_idx = (idx + i) % len(self.all_models)
+                candidate = self.all_models[next_idx]
+                if now >= self._cooldowns.get(candidate, 0):
+                    return candidate
+
+            # Все заблокированы — возвращаем None.
+            # Вызывающий код должен подождать (asyncio.sleep) и повторить.
+            return None
 
     def reset_to_primary(self):
         """Сброс не требуется, так как get_best_available_model всегда проверяет приоритеты."""

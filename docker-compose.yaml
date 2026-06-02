@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: tempo-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: itempo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tempo-app
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    dns:
+      - 10.244.0.11
+      - 172.18.128.50
+      - 8.8.8.8
+      - 1.1.1.1
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://postgres:123456@db:5432/itempo
+      - API_HOST=0.0.0.0
+      - ADMIN_HOST=0.0.0.0
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./qdrant_storage_v2:/app/qdrant_storage_v2
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:

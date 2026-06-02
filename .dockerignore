@@ -1,0 +1,17 @@
+.git
+.venv
+qdrant_storage
+qdrant_storage_v2
+*.db
+*.log
+__pycache__
+*.pyc
+.ruff_cache
+build
+dist
+.antigravitycli
+.gemini
+*.exe
+data/
+qdrant_storage_v2/
+chat_history.db
