@@ -258,15 +258,15 @@
                     </div>
                     <div class="upload-form">
                         <div class="form-row">
-                            <div class="form-group">
-                                <label>Предприятие</label>
-                                <select class="select-input" id="docCompany">
-                                    <option value="">📁 Все предприятия (общий)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
+                            <div class="form-group" style="grid-column: span 2;">
                                 <label>Название документа</label>
                                 <input type="text" class="text-input" id="docTitle" placeholder="Например: Дресс-код 2024">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Организации для публикации</label>
+                            <div id="docCompaniesContainer" class="permissions-grid">
+                                <!-- Генерируется динамически через JS -->
                             </div>
                         </div>
                         <div class="tabs">

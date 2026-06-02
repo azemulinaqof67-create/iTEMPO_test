@@ -31,20 +31,19 @@ function hasPerm(p) {
   return currentUser.role === 'superadmin' || (currentUser.permissions || []).includes(p);
 }
 
-// Companies dict (будет загружен с сервера или захардкожен)
-const COMPANIES = {
-  'itz': 'АО "ИТЗ"',
-  'kmk': 'АО "КМК "ТЭМПО"',
-  'ntz': 'АО "НТЗ "ТЭМ-ПО"',
-  'technotron': 'АО "ПТФК "Технотрон"',
-  'metiz': 'ООО "Технотрон-Метиз"',
-  'kzmk': 'АО "КЗМК "ТЭМПО"',
-  'zteo': 'АО "ПТФК "ЗТЭО"',
-  'td': 'АО "ТД "ТЭМПО"',
-  'sks': 'АО "СКС "ТЭМПО"',
-  'port': 'ООО "ТЭМПО-ПОРТ"',
-  'it': 'ООО "АЙТИ "ТЭМПО"',
-};
+// Companies dict (будет загружен с сервера)
+let COMPANIES = {};
+
+async function loadCompanies() {
+  try {
+    const res = await fetch('/api/companies');
+    if (res.ok) {
+      COMPANIES = await res.json();
+    }
+  } catch (e) {
+    console.error('Error loading companies:', e);
+  }
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +154,7 @@ function showApp() {
   const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
   
   if (isRestricted) {
-    const selectsToLock = ['docCompany', 'broadcastCompany'];
+    const selectsToLock = ['broadcastCompany'];
     selectsToLock.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -164,7 +163,7 @@ function showApp() {
       }
     });
   } else {
-    const selectsToLock = ['docCompany', 'broadcastCompany'];
+    const selectsToLock = ['broadcastCompany'];
     selectsToLock.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -796,15 +795,62 @@ function showDocUpload() {
   document.getElementById('docUploadPanel').classList.remove('hidden');
   document.getElementById('docPreviewSection').classList.add('hidden');
   
-  // Автоматически выбираем текущее предприятие из фильтра
-  const docCompanySelect = document.getElementById('docCompany');
-  if (docCompanySelect) {
-    if (currentCompanyFilter !== 'all' && currentCompanyFilter !== 'common') {
-      docCompanySelect.value = currentCompanyFilter;
-    } else {
-      docCompanySelect.value = ''; // Все предприятия (общий)
-    }
+  const container = document.getElementById('docCompaniesContainer');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  const userCompany = currentUser.company_id;
+  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
+  
+  // Чекбокс "Общие документы"
+  const commonItem = document.createElement('label');
+  commonItem.className = 'permission-item';
+  
+  const commonCheckbox = document.createElement('input');
+  commonCheckbox.type = 'checkbox';
+  commonCheckbox.name = 'docCompanies';
+  commonCheckbox.value = 'common';
+  
+  if (isRestricted) {
+    commonCheckbox.disabled = true;
+  } else if (currentCompanyFilter === 'common') {
+    commonCheckbox.checked = true;
   }
+  
+  const commonSpan = document.createElement('span');
+  commonSpan.textContent = '📁 Общие документы';
+  commonItem.appendChild(commonCheckbox);
+  commonItem.appendChild(commonSpan);
+  container.appendChild(commonItem);
+  
+  // Чекбоксы для остальных компаний
+  Object.entries(COMPANIES).forEach(([id, name]) => {
+    const item = document.createElement('label');
+    item.className = 'permission-item';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'docCompanies';
+    checkbox.value = id;
+    
+    if (isRestricted) {
+      if (id === userCompany) {
+        checkbox.checked = true;
+      }
+      checkbox.disabled = true;
+    } else {
+      if (currentCompanyFilter === id) {
+        checkbox.checked = true;
+      }
+    }
+    
+    const span = document.createElement('span');
+    span.textContent = name;
+    item.appendChild(checkbox);
+    item.appendChild(span);
+    container.appendChild(item);
+  });
 }
 
 function hideDocUpload() {
@@ -848,7 +894,16 @@ async function previewDocument() {
 
   try {
     const formData = new FormData();
-    const companyId = document.getElementById('docCompany').value;
+    const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
+    const companyIds = Array.from(checkboxes).map(cb => cb.value);
+    
+    if (companyIds.length === 0) {
+      toast('Выберите хотя бы одну организацию для публикации', 'error');
+      btn.disabled = false;
+      btn.textContent = '🔍 Обработать через ИИ';
+      return;
+    }
+
     const title = document.getElementById('docTitle').value;
 
     if (docMode === 'file' && selectedFile) {
@@ -861,7 +916,14 @@ async function previewDocument() {
       toast('Выберите файл или введите текст', 'error');
       return;
     }
-    if (companyId) formData.append('company_id', companyId);
+    
+    // Передаем список выбранных компаний
+    formData.append('company_ids', companyIds.join(','));
+    // Передаем первую компанию для генерации превью по умолчанию
+    const primaryCompany = companyIds[0] === 'common' ? '' : companyIds[0];
+    if (primaryCompany) {
+      formData.append('company_id', primaryCompany);
+    }
     if (title) formData.append('doc_title', title);
 
     const res = await fetch('/api/documents/preview', {
@@ -891,14 +953,20 @@ async function previewDocument() {
 async function saveDocument() {
   const content = document.getElementById('docPreview').value;
   const filename = document.getElementById('docFilename').value;
-  const company_id = document.getElementById('docCompany').value || null;
+  
+  const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
+  const company_ids = Array.from(checkboxes).map(cb => cb.value);
 
+  if (company_ids.length === 0) {
+    toast('Выберите хотя бы одну организацию для публикации', 'error');
+    return;
+  }
   if (!content.trim()) { toast('Содержимое пустое', 'error'); return; }
 
   try {
     const data = await apiFetch('/api/documents/save', {
       method: 'POST',
-      body: JSON.stringify({content, filename, company_id}),
+      body: JSON.stringify({content, filename, company_ids}),
     });
     const el = document.getElementById('saveResult');
     el.textContent = data.message;
@@ -1025,7 +1093,11 @@ async function editDocument(path, companyId) {
     }
 
     // Заполняем поля формы
-    document.getElementById('docCompany').value = companyId || '';
+    const checkboxes = document.querySelectorAll('input[name="docCompanies"]');
+    checkboxes.forEach(cb => {
+      const targetVal = companyId || 'common';
+      cb.checked = (cb.value === targetVal);
+    });
     
     const filename = path.split('/').pop();
     document.getElementById('docTitle').value = filename.replace('.md', '');
@@ -1387,7 +1459,7 @@ function escapeHtml(str) {
 }
 
 function populateCompanySelects() {
-  const selects = ['docCompany', 'broadcastCompany'];
+  const selects = ['broadcastCompany'];
   selects.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -1429,7 +1501,29 @@ function renderAdminsTable(admins) {
   }
   
   tbody.innerHTML = admins.map(a => {
-    const companyName = a.company_id === 'all' ? 'Все' : (COMPANIES[a.company_id] || a.company_id || 'Общие');
+    let companyName = 'Все';
+    if (a.company_ids && a.company_ids.length > 0) {
+      if (a.company_ids.includes('all')) {
+        companyName = 'Все';
+      } else {
+        companyName = a.company_ids.map(cid => cid === 'common' ? 'Общие' : (COMPANIES[cid] || cid)).join(', ');
+      }
+    } else if (a.company_id) {
+      if (a.company_id === 'all') {
+        companyName = 'Все';
+      } else {
+        try {
+          if (a.company_id.startsWith('[') && a.company_id.endsWith(']')) {
+            const parsed = JSON.parse(a.company_id);
+            companyName = parsed.map(cid => cid === 'common' ? 'Общие' : (COMPANIES[cid] || cid)).join(', ');
+          } else {
+            companyName = COMPANIES[a.company_id] || a.company_id;
+          }
+        } catch(e) {
+          companyName = COMPANIES[a.company_id] || a.company_id;
+        }
+      }
+    }
     const roleClass = a.role === 'superadmin' ? 'superadmin' : 'admin';
     const roleLabel = a.role === 'superadmin' ? 'Суперадмин' : 'Администратор организации';
     
@@ -1468,10 +1562,54 @@ function showAdminModal(adminId = null) {
     <option value="superadmin" ${admin && admin.role === 'superadmin' ? 'selected' : ''}>Суперадминистратор (полный доступ)</option>
   `;
   
-  const companyOptions = Object.entries(COMPANIES).map(([k,v]) =>
-    `<option value="${k}" ${admin && admin.company_id === k ? 'selected' : ''}>${v}</option>`
-  ).join('');
+  // Получаем список привязанных компаний
+  let selectedCompanies = [];
+  if (admin) {
+    if (admin.company_ids) {
+      selectedCompanies = admin.company_ids;
+    } else if (admin.company_id) {
+      if (admin.company_id === 'all') {
+        selectedCompanies = ['all'];
+      } else {
+        try {
+          if (admin.company_id.startsWith('[') && admin.company_id.endsWith(']')) {
+            selectedCompanies = JSON.parse(admin.company_id);
+          } else {
+            selectedCompanies = [admin.company_id];
+          }
+        } catch(e) {
+          selectedCompanies = [admin.company_id];
+        }
+      }
+    }
+  }
+
+  const allChecked = selectedCompanies.includes('all') ? 'checked' : '';
+  const commonChecked = selectedCompanies.includes('common') || selectedCompanies.includes('all') ? 'checked' : '';
+  const commonDisabled = selectedCompanies.includes('all') ? 'disabled' : '';
   
+  const companyCheckboxes = [
+    `<label class="permission-item" style="grid-column: span 2; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 4px;">
+      <input type="checkbox" name="adminCompanies" value="all" ${allChecked} onchange="toggleAdminAllCompaniesCheckbox(this)">
+      <b>🌍 Доступ ко всем организациям</b>
+     </label>`,
+    `<label class="permission-item">
+      <input type="checkbox" name="adminCompanies" value="common" ${commonChecked} ${commonDisabled}>
+      <span>📁 Доступ к общим файлам</span>
+     </label>`
+  ].concat(
+    Object.entries(COMPANIES).map(([k, v]) => {
+      const checked = selectedCompanies.includes(k) || selectedCompanies.includes('all') ? 'checked' : '';
+      const disabled = selectedCompanies.includes('all') ? 'disabled' : '';
+      return `
+        <label class="permission-item">
+          <input type="checkbox" name="adminCompanies" value="${k}" ${checked} ${disabled}>
+          <span>${v}</span>
+        </label>
+      `;
+    })
+  ).join('');
+
   const permsCheckboxes = Object.entries(PERMISSION_NAMES).map(([key, name]) => {
     const checked = admin && (admin.permissions || []).includes(key) ? 'checked' : '';
     return `
@@ -1499,12 +1637,11 @@ function showAdminModal(adminId = null) {
             ${roleOptions}
           </select>
         </div>
-        <div class="form-group" id="adminCompanyGroup">
-          <label>Организация</label>
-          <select id="adminCompany" class="select-input">
-            <option value="all" ${admin && admin.company_id === 'all' ? 'selected' : ''}>Все организации</option>
-            ${companyOptions}
-          </select>
+      </div>
+      <div class="form-group" id="adminCompanyGroup" style="grid-column: span 2;">
+        <label>Доступные организации</label>
+        <div class="permissions-grid">
+          ${companyCheckboxes}
         </div>
       </div>
       <div class="form-group" id="adminPermissionsGroup">
@@ -1523,6 +1660,21 @@ function showAdminModal(adminId = null) {
 
   openModal(title, bodyHtml, footerHtml, false);
   toggleAdminRoleFields();
+}
+
+function toggleAdminAllCompaniesCheckbox(el) {
+  const checkboxes = document.querySelectorAll('input[name="adminCompanies"]');
+  checkboxes.forEach(cb => {
+    if (cb !== el) {
+      if (el.checked) {
+        cb.checked = true;
+        cb.disabled = true;
+      } else {
+        cb.disabled = false;
+        cb.checked = false;
+      }
+    }
+  });
 }
 
 function toggleAdminRoleFields() {
@@ -1553,11 +1705,22 @@ async function saveAdmin(e, adminId = null) {
   const password = document.getElementById('adminPassword').value;
   const role = document.getElementById('adminRole').value;
   
-  let company_id = 'all';
+  let company_id = ['all'];
   let permissions = [];
   
   if (role !== 'superadmin') {
-    company_id = document.getElementById('adminCompany').value;
+    const checkedCompanies = document.querySelectorAll('input[name="adminCompanies"]:checked');
+    const companyIds = Array.from(checkedCompanies).map(cb => cb.value);
+    
+    if (companyIds.includes('all')) {
+      company_id = ['all'];
+    } else if (companyIds.length === 0) {
+      toast('Выберите хотя бы одну организацию для администратора', 'error');
+      return;
+    } else {
+      company_id = companyIds;
+    }
+    
     const checkedBoxes = document.querySelectorAll('input[name="permissions"]:checked');
     permissions = Array.from(checkedBoxes).map(cb => cb.value);
   } else {
@@ -1567,7 +1730,7 @@ async function saveAdmin(e, adminId = null) {
   const payload = {
     username,
     role,
-    company_id,
+    company_id, // отправляем массив компаний на бэкенд
     permissions
   };
   
@@ -1613,6 +1776,7 @@ async function deleteAdmin(adminId, username) {
 // ── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
+  await loadCompanies();
   const authenticated = await checkAuth();
   if (authenticated) {
     showApp();
