@@ -530,6 +530,19 @@ class EmbeddingService:
                 await asyncio.sleep(2.0 * (2**attempt))
                 logger.warning("⚠️ Qdrant error (attempt %d): %s", attempt + 1, e)
 
+    async def _setup_indexes(self, client, loop):
+        """Создание индексов для полей метаданных для оптимизации поиска."""
+        from qdrant_client import models
+        for field_name in ["doc_type", "company_tag"]:
+            await self._qdrant_op(
+                loop,
+                lambda f=field_name: client.create_payload_index(
+                    collection_name=self.config.collection_name,
+                    field_name=f,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            )
+
     async def update_database(self, chunks: List[Dict[str, Any]]):
         """Полное обновление базы (recreate collection)."""
         client = self.client_manager.get_qdrant_client()
@@ -549,6 +562,7 @@ class EmbeddingService:
                 sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
             ),
         )
+        await self._setup_indexes(client, loop)
 
         batch_size = 8
         total = len(chunks)
@@ -591,6 +605,7 @@ class EmbeddingService:
                     sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
                 ),
             )
+            await self._setup_indexes(client, loop)
             print("Создана новая коллекция")
 
         chunks_by_source: Dict[str, List[Dict[str, str]]] = {}
