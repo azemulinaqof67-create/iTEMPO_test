@@ -81,6 +81,21 @@ def _extract_doc_title(file_path: Path) -> Optional[str]:
     return None
 
 
+def _count_files_in_dir(directory: Path) -> int:
+    """Рекурсивно считает файлы с допустимыми расширениями, исключая файлы index.md."""
+    if not directory.exists() or not directory.is_dir():
+        return 0
+    count = 0
+    try:
+        for p in directory.rglob("*"):
+            if p.is_file() and p.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                if p.name != "index.md":
+                    count += 1
+    except Exception:
+        pass
+    return count
+
+
 def create_admin_app(config, assistant=None) -> FastAPI:
     """Создать FastAPI приложение для панели администратора."""
     global _config, _assistant, _admin_app
@@ -573,14 +588,16 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                             "name": item.name,
                             "path": item.name,
                             "is_dir": True,
-                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы"
+                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "files_count": _count_files_in_dir(item)
                         })
                     elif is_super and item.name not in {".chunks_cache"}:
                         items.append({
                             "name": item.name,
                             "path": item.name,
                             "is_dir": True,
-                            "company_name": f"Папка / {item.name}"
+                            "company_name": f"Папка / {item.name}",
+                            "files_count": _count_files_in_dir(item)
                         })
                 elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
                     items.append({
@@ -604,7 +621,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         "name": item.name,
                         "path": rel_path,
                         "is_dir": True,
-                        "company_name": company_name
+                        "company_name": company_name,
+                        "files_count": _count_files_in_dir(item)
                     })
                 elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
                     items.append({

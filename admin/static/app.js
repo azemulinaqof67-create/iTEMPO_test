@@ -759,7 +759,7 @@ function renderDocuments() {
             <span class="company-badge common">${escapeHtml(doc.company_name || 'Папка')}</span>
           </div>
           <div class="doc-name" style="font-weight: 600; color: var(--accent); font-size: 15px;">📁 ${escapeHtml(doc.name)}</div>
-          <div class="doc-meta" style="font-size:12px;color:var(--text-muted); margin-top: 4px;">Папка</div>
+          <div class="doc-meta" style="font-size:12px;color:var(--text-muted); margin-top: 4px;">Файлов: ${doc.files_count !== undefined ? doc.files_count : 0}</div>
           <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
         </div>
       `;
