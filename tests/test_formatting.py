@@ -4,6 +4,8 @@ from src.assistant.assistant import AssistantService
 
 class DummyAssistant:
     _sanitize_response = AssistantService._sanitize_response
+    _format_markdown_tables = AssistantService._format_markdown_tables
+    _format_html_tables = AssistantService._format_html_tables
 
 @pytest.fixture
 def assistant():
@@ -69,3 +71,41 @@ def test_sanitize_response_code_blocks(assistant):
 
     # Инлайн-код
     assert assistant._sanitize_response("Use `x < 5` to check") == "Use <code>x &lt; 5</code> to check"
+
+
+def test_sanitize_response_html_tables(assistant):
+    # Тест 2-колоночной HTML таблицы
+    html_table_2col = (
+        "<table>"
+        "<tr><th>Имя</th><th>Телефон</th></tr>"
+        "<tr><td>Девитьяров В.А.</td><td>2313</td></tr>"
+        "</table>"
+    )
+    expected_2col = "• <b>Имя:</b> Девитьяров В.А. — <b>Телефон:</b> 2313"
+    assert assistant._sanitize_response(html_table_2col) == expected_2col
+
+    # Тест 3-колоночной HTML таблицы
+    html_table_3col = (
+        "<table>"
+        "<tr><th>Имя</th><th>Роль</th><th>Кабинет</th></tr>"
+        "<tr><td>Иван</td><td>Инженер</td><td>302</td></tr>"
+        "</table>"
+    )
+    expected_3col = "• <b>Имя:</b> Иван\n  <b>Роль:</b> Инженер\n  <b>Кабинет:</b> 302"
+    assert assistant._sanitize_response(html_table_3col) == expected_3col
+
+
+def test_sanitize_response_markdown_tables(assistant):
+    # Тест Markdown таблицы
+    md_table = (
+        "| Контакт | Телефон |\n"
+        "|---------|---------|\n"
+        "| Девитьяров | 2313 |\n"
+        "| Андреев | 1888 |"
+    )
+    expected_md = (
+        "• <b>Контакт:</b> Девитьяров — <b>Телефон:</b> 2313\n"
+        "• <b>Контакт:</b> Андреев — <b>Телефон:</b> 1888"
+    )
+    assert assistant._sanitize_response(md_table) == expected_md
+
