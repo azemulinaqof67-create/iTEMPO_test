@@ -65,7 +65,6 @@ class RAGConfig:
     rerank_top_k: int = 25
     rerank_max_docs: int = 50
     rerank_doc_chars: int = 1000
-    rerank_min_docs: int = 5
     semantic_chunk_size: int = 1000
     semantic_similarity_threshold: float = 0.75
     parent_chunk_size: int = 6000
@@ -149,7 +148,6 @@ class RAGConfig:
             rerank_top_k=_get_int("RERANK_TOP_K", rag_y, "rerank_top_k", c.rerank_top_k),
             rerank_max_docs=_get_int("RERANK_MAX_DOCS", rag_y, "rerank_max_docs", c.rerank_max_docs),
             rerank_doc_chars=_get_int("RERANK_DOC_CHARS", rag_y, "rerank_doc_chars", c.rerank_doc_chars),
-            rerank_min_docs=_get_int("RERANK_MIN_DOCS", rag_y, "rerank_min_docs", c.rerank_min_docs),
             semantic_chunk_size=_get_int("SEMANTIC_CHUNK_SIZE", rag_y, "semantic_chunk_size", c.semantic_chunk_size),
             semantic_similarity_threshold=_get_float("SEMANTIC_SIMILARITY_THRESHOLD", rag_y, "semantic_similarity_threshold", c.semantic_similarity_threshold),
             parent_chunk_size=_get_int("PARENT_CHUNK_SIZE", rag_y, "parent_chunk_size", c.parent_chunk_size),

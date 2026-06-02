@@ -504,110 +504,27 @@ def _get_company_keyboard() -> List[List[Dict]]:
 
 def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[str]:
     """
-    Разбивает длинный HTML текст на части допустимого размера,
-    сохраняя баланс HTML тегов, чтобы не обрывать слова.
+    Разбивает длинный текст на части, не обрывая слова.
+    Нужно если ответ ассистента превышает лимит MAX API.
     """
     if len(text) <= max_len:
         return [text]
 
-    # Разделяем на теги и текст
-    tokens = re.split(r'(<[^>]+>)', text)
-    chunks = []
-    
-    current_chunk = []
-    current_len = 0
-    open_tags = []  # стек открытых тегов: список кортежей (имя_тега, полный_открывающий_тег)
+    parts = []
+    while len(text) > max_len:
+        # Ищем последний пробел/перевод строки до границы
+        split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            split_at = text.rfind(" ", 0, max_len)
+        if split_at == -1:
+            split_at = max_len  # Жёсткое разрезание если нет пробелов
 
-    for token in tokens:
-        if not token:
-            continue
-            
-        if token.startswith('<') and token.endswith('>'):
-            # Это тег
-            tag_content = token[1:-1].strip()
-            if tag_content.startswith('/'):
-                # Закрывающий тег
-                tag_name = tag_content[1:].strip().split()[0].lower()
-                for i in range(len(open_tags) - 1, -1, -1):
-                    if open_tags[i][0] == tag_name:
-                        open_tags.pop(i)
-                        break
-            elif not tag_content.endswith('/'):
-                # Открывающий тег (игнорируем самозакрывающиеся теги)
-                parts = tag_content.split()
-                if parts:
-                    tag_name = parts[0].lower()
-                    if tag_name in ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'span', 'tg-spoiler', 'a', 'code', 'pre', 'blockquote']:
-                        open_tags.append((tag_name, token))
-            
-            # Проверяем, влезет ли этот тег
-            if current_len + len(token) > max_len:
-                closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                current_chunk.append(closing_tags)
-                chunks.append("".join(current_chunk))
-                
-                current_chunk = []
-                opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                current_chunk.append(opening_tags)
-                current_len = len(opening_tags)
-            
-            current_chunk.append(token)
-            current_len += len(token)
-        else:
-            # Это обычный текст. Он может быть длинным, поэтому его придется разбивать.
-            text_fragment = token
-            while text_fragment:
-                # Сколько места осталось?
-                # Учитываем закрывающие теги в конце чанка
-                closing_tags_len = sum(len(name) + 3 for name, _ in open_tags)  # len('</name>')
-                available = max_len - current_len - closing_tags_len
-                
-                if available <= 0:
-                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                    current_chunk.append(closing_tags)
-                    chunks.append("".join(current_chunk))
-                    
-                    current_chunk = []
-                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                    current_chunk.append(opening_tags)
-                    current_len = len(opening_tags)
-                    available = max_len - current_len - closing_tags_len
-                    if available <= 0:
-                        available = 1
-                
-                if len(text_fragment) <= available:
-                    current_chunk.append(text_fragment)
-                    current_len += len(text_fragment)
-                    break
-                else:
-                    sub_frag = text_fragment[:available]
-                    split_idx = sub_frag.rfind('\n')
-                    if split_idx <= 0:
-                        split_idx = sub_frag.rfind(' ')
-                    if split_idx <= 0:
-                        split_idx = available
-                    
-                    part_to_add = text_fragment[:split_idx]
-                    text_fragment = text_fragment[split_idx:]
-                    
-                    current_chunk.append(part_to_add)
-                    
-                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                    current_chunk.append(closing_tags)
-                    chunks.append("".join(current_chunk))
-                    
-                    current_chunk = []
-                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                    current_chunk.append(opening_tags)
-                    current_len = len(opening_tags)
+        parts.append(text[:split_at].strip())
+        text = text[split_at:].strip()
 
-    if current_chunk:
-        chunk_str = "".join(current_chunk)
-        clean_text = re.sub(r'<[^>]+>', '', chunk_str).strip()
-        if clean_text:
-            chunks.append(chunk_str)
-            
-    return chunks
+    if text:
+        parts.append(text)
+    return parts
 
 
 def _get_session_id(user_id: int) -> str:

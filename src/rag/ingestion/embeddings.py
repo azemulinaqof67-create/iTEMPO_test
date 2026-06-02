@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from fastembed import SparseTextEmbedding
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 from qdrant_client.models import Distance, PointStruct, VectorParams, SparseVectorParams, SparseIndexParams, SparseVector
 
@@ -327,9 +328,9 @@ class EmbeddingService:
         # если предыдущие "повисли" на сетевом таймауте.
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="emb_")
 
-        # Получение модели для генерации разреженных векторов из ClientManager
-        logger.info("Получение модели разреженных векторов из ClientManager...")
-        self.sparse_model = self.client_manager.get_sparse_embedder()
+        # Инициализация модели для генерации разреженных векторов
+        logger.info("Инициализация модели разреженных векторов Qdrant/bm25...")
+        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     def _build_pool(self, config: Config, model_name: Optional[str] = None) -> KeyPool:
         """Создать пул слотов для конкретной модели через ApiKeyManager."""
@@ -529,19 +530,6 @@ class EmbeddingService:
                 await asyncio.sleep(2.0 * (2**attempt))
                 logger.warning("⚠️ Qdrant error (attempt %d): %s", attempt + 1, e)
 
-    async def _setup_indexes(self, client, loop):
-        """Создание индексов для полей метаданных для оптимизации поиска."""
-        from qdrant_client import models
-        for field_name in ["doc_type", "company_tag"]:
-            await self._qdrant_op(
-                loop,
-                lambda f=field_name: client.create_payload_index(
-                    collection_name=self.config.collection_name,
-                    field_name=f,
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                )
-            )
-
     async def update_database(self, chunks: List[Dict[str, Any]]):
         """Полное обновление базы (recreate collection)."""
         client = self.client_manager.get_qdrant_client()
@@ -561,7 +549,6 @@ class EmbeddingService:
                 sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
             ),
         )
-        await self._setup_indexes(client, loop)
 
         batch_size = 8
         total = len(chunks)
@@ -604,7 +591,6 @@ class EmbeddingService:
                     sparse_vectors_config={"sparse": SparseVectorParams(index=SparseIndexParams(on_disk=True))},
                 ),
             )
-            await self._setup_indexes(client, loop)
             print("Создана новая коллекция")
 
         chunks_by_source: Dict[str, List[Dict[str, str]]] = {}

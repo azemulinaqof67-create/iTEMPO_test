@@ -521,142 +521,6 @@ async def send_document(update: Update, document_rule):
         await update.message.reply_text(f"❌ Не удалось отправить документ: {document_rule.description}")
 
 
-def split_html_message(text: str, max_len: int = 4000) -> list[str]:
-    """
-    Разделяет HTML сообщение на чанки допустимого размера,
-    сохраняя баланс HTML тегов.
-    """
-    if len(text) <= max_len:
-        return [text]
-
-    # Разделяем на теги и текст
-    tokens = re.split(r'(<[^>]+>)', text)
-    chunks = []
-    
-    current_chunk = []
-    current_len = 0
-    open_tags = []  # стек открытых тегов: список кортежей (имя_тега, полный_открывающий_тег)
-
-    for token in tokens:
-        if not token:
-            continue
-            
-        if token.startswith('<') and token.endswith('>'):
-            # Это тег
-            tag_content = token[1:-1].strip()
-            if tag_content.startswith('/'):
-                # Закрывающий тег
-                tag_name = tag_content[1:].strip().split()[0].lower()
-                # Удаляем из стека последний открытый тег с таким именем
-                for i in range(len(open_tags) - 1, -1, -1):
-                    if open_tags[i][0] == tag_name:
-                        open_tags.pop(i)
-                        break
-            elif not tag_content.endswith('/'):
-                # Открывающий тег (игнорируем самозакрывающиеся теги)
-                parts = tag_content.split()
-                if parts:
-                    tag_name = parts[0].lower()
-                    if tag_name in ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'span', 'tg-spoiler', 'a', 'code', 'pre', 'blockquote']:
-                        open_tags.append((tag_name, token))
-            
-            # Проверяем, влезет ли этот тег
-            if current_len + len(token) > max_len:
-                # Нужно закрыть текущий чанк
-                closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                current_chunk.append(closing_tags)
-                chunks.append("".join(current_chunk))
-                
-                # Начинаем новый чанк и открываем теги заново
-                current_chunk = []
-                opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                current_chunk.append(opening_tags)
-                current_len = len(opening_tags)
-            
-            current_chunk.append(token)
-            current_len += len(token)
-        else:
-            # Это обычный текст. Он может быть длинным, поэтому его придется разбивать.
-            text_fragment = token
-            while text_fragment:
-                # Сколько места осталось?
-                # Учитываем закрывающие теги в конце чанка
-                closing_tags_len = sum(len(name) + 3 for name, _ in open_tags)  # len('</name>')
-                available = max_len - current_len - closing_tags_len
-                
-                if available <= 0:
-                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                    current_chunk.append(closing_tags)
-                    chunks.append("".join(current_chunk))
-                    
-                    current_chunk = []
-                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                    current_chunk.append(opening_tags)
-                    current_len = len(opening_tags)
-                    available = max_len - current_len - closing_tags_len
-                    if available <= 0:
-                        available = 1
-                
-                if len(text_fragment) <= available:
-                    current_chunk.append(text_fragment)
-                    current_len += len(text_fragment)
-                    break
-                else:
-                    sub_frag = text_fragment[:available]
-                    split_idx = sub_frag.rfind('\n')
-                    if split_idx <= 0:
-                        split_idx = sub_frag.rfind(' ')
-                    if split_idx <= 0:
-                        split_idx = available
-                    
-                    part_to_add = text_fragment[:split_idx]
-                    text_fragment = text_fragment[split_idx:]
-                    
-                    current_chunk.append(part_to_add)
-                    
-                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
-                    current_chunk.append(closing_tags)
-                    chunks.append("".join(current_chunk))
-                    
-                    current_chunk = []
-                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
-                    current_chunk.append(opening_tags)
-                    current_len = len(opening_tags)
-
-    if current_chunk:
-        chunk_str = "".join(current_chunk)
-        clean_text = re.sub(r'<[^>]+>', '', chunk_str).strip()
-        if clean_text:
-            chunks.append(chunk_str)
-            
-    return chunks
-
-
-def split_plain_text(text: str, max_len: int = 4000) -> list[str]:
-    """
-    Разделяет обычный текст на чанки допустимого размера.
-    """
-    if len(text) <= max_len:
-        return [text]
-    
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        
-        sub_frag = text[:max_len]
-        split_idx = sub_frag.rfind('\n')
-        if split_idx <= 0:
-            split_idx = sub_frag.rfind(' ')
-        if split_idx <= 0:
-            split_idx = max_len
-            
-        chunks.append(text[:split_idx])
-        text = text[split_idx:]
-    return chunks
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений (без стриминга для стабильности)"""
     if not update.message or not update.effective_user or not context.bot_data or not update.effective_chat:
@@ -766,10 +630,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Remove image markdown from text
                 clean_answer = re.sub(image_pattern, '', answer).strip()
                 
-                # Send text answer first (splitting if it is too long)
+                # Send text answer first
                 if clean_answer:
-                    for chunk in split_html_message(clean_answer, max_len=4000):
-                        await update.message.reply_text(chunk, parse_mode="HTML")
+                    await update.message.reply_text(clean_answer, parse_mode="HTML")
                 
                 # Send images from answer (old method)
                 for alt_text, image_path in images:
@@ -788,8 +651,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception as img_error:
                         logger.error(f"Failed to send image {image_path}: {img_error}")
                         # If image sending fails, send the markdown as text
-                        for chunk in split_html_message(f"![{alt_text}]({image_path})", max_len=4000):
-                            await update.message.reply_text(chunk, parse_mode="HTML")
+                        await update.message.reply_text(f"![{alt_text}]({image_path})", parse_mode="HTML")
                 
                 # Send documents from DocumentSender (new method)
                 for document_rule in documents_to_send:
@@ -797,9 +659,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
             except Exception as e:
                 logger.warning(f"Error sending message with HTML: {e}")
-                # Если HTML все-таки сломан, шлем чистый текст (тоже разбивая)
-                for chunk in split_plain_text(answer, max_len=4000):
-                    await update.message.reply_text(chunk)
+                # Если HTML все-таки сломан, шлем чистый текст
+                await update.message.reply_text(answer)
                 
                 # Still try to send documents
                 for document_rule in documents_to_send:
@@ -1027,8 +888,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clean_answer = _re.sub(image_pattern, '', answer).strip()
                 try:
                     if clean_answer:
-                        for chunk in split_html_message(clean_answer, max_len=4000):
-                            await update.message.reply_text(chunk, parse_mode="HTML")
+                        await update.message.reply_text(clean_answer, parse_mode="HTML")
                     for alt_text, image_path in images:
                         try:
                             if image_path.startswith('data/'):
@@ -1042,8 +902,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for document_rule in documents_to_send:
                         await send_document(update, document_rule)
                 except Exception:
-                    for chunk in split_plain_text(answer, max_len=4000):
-                        await update.message.reply_text(chunk)
+                    await update.message.reply_text(answer)
             else:
                 await update.message.reply_text("❌ Не удалось получить ответ. Попробуйте другой вопрос.")
 

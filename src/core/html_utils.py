@@ -4,7 +4,7 @@ import html
 def clean_tg_html(text: str) -> str:
     """
     Экранирует спецсимволы для Telegram HTML, сохраняя разрешенные теги.
-    Разрешенные теги Telegram: <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>, <blockquote>, <tg-spoiler>, <span class="tg-spoiler">, <a>, <code>, <pre>.
+    Разрешенные теги Telegram: <b>, <i>, <a>, <code>, <pre>.
     """
     if not text:
         return ""
@@ -17,11 +17,8 @@ def clean_tg_html(text: str) -> str:
         placeholders.append(match.group(0))
         return f"__TAG_PLACEHOLDER_{len(placeholders)-1}__"
 
-    # Ищем все разрешенные теги Telegram, включая теги с атрибутами
-    tag_pattern = re.compile(
-        r'<(?:/?(?:b|strong|i|em|u|ins|s|strike|del|tg-spoiler|blockquote|span|a|code|pre))(?:\s+[^>]*?)?>',
-        re.IGNORECASE
-    )
+    # Ищем теги: <b>, </b>, <i>, </i>, <a href="...">, </a>, <code>, </code>, <pre>, </pre>
+    tag_pattern = re.compile(r'<(?:/?(?:b|i|code|pre)|a(?:\s+href=["\'][^"\']*["\'])?\s*/?)>', re.IGNORECASE)
     
     # Прячем теги
     text_with_placeholders = tag_pattern.sub(tag_replacer, text)
@@ -45,19 +42,12 @@ def clean_tg_html(text: str) -> str:
         final_text = final_text.replace(f"__TAG_PLACEHOLDER_{i}__", original_tag)
 
     # 2. Балансировка тегов
-    tags_to_balance = [
-        'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 
-        'tg-spoiler', 'blockquote', 'span', 'a', 'code', 'pre'
-    ]
-    
-    for tag in tags_to_balance:
-        open_pattern = re.compile(f'<{tag}\\b(?:\\s+[^>]*?)?>', re.IGNORECASE)
-        close_pattern = re.compile(f'</{tag}>', re.IGNORECASE)
-        
+    for tag in ['b', 'i', 'code', 'pre']:
         # Удаляем "одинокие" закрывающие теги
         while True:
-            opens = [m.start() for m in open_pattern.finditer(final_text)]
-            closes = [m.start() for m in close_pattern.finditer(final_text)]
+            # Находим все позиции открывающих и закрывающих тегов
+            opens = [m.start() for m in re.finditer(f'<{tag}>', final_text, re.IGNORECASE)]
+            closes = [m.start() for m in re.finditer(f'</{tag}>', final_text, re.IGNORECASE)]
             
             # Если есть закрывающий тег до первого открывающего — он лишний
             found_bad_close = False
@@ -73,9 +63,27 @@ def clean_tg_html(text: str) -> str:
                 break
 
         # Дозакрываем открытые
-        opens = len(open_pattern.findall(final_text))
-        closes = len(close_pattern.findall(final_text))
+        opens = len(re.findall(f'<{tag}>', final_text, re.IGNORECASE))
+        closes = len(re.findall(f'</{tag}>', final_text, re.IGNORECASE))
         if opens > closes:
             final_text += f"</{tag}>" * (opens - closes)
+            
+    # Аналогично для <a>
+    while True:
+        opens = [m.start() for m in re.finditer(r'<a\s+href', final_text, re.IGNORECASE)]
+        closes = [m.start() for m in re.finditer(r'</a>', final_text, re.IGNORECASE)]
+        found_bad_close = False
+        for c in closes:
+            if not any(o < c for o in opens):
+                final_text = final_text[:c] + final_text[c + 4:]
+                found_bad_close = True
+                break
+        if not found_bad_close:
+            break
+
+    a_opens = len(re.findall(r'<a\s+href', final_text, re.IGNORECASE))
+    a_closes = len(re.findall(r'</a>', final_text, re.IGNORECASE))
+    if a_opens > a_closes:
+        final_text += "</a>" * (a_opens - a_closes)
 
     return final_text

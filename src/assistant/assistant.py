@@ -16,7 +16,6 @@ from cachetools import TTLCache
 
 from src.core.config import Config
 from src.core.document_sender import DocumentSender
-from src.core.html_utils import clean_tg_html
 from src.core.exceptions import AssistantError, AudioError, LLMError, SearchError
 from src.helpdesk.ticketing import (
     TicketContext,
@@ -438,42 +437,7 @@ class AssistantService:
         # Удаляем блоки рассуждений <thought>...</thought>
         text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
         
-        # 1. Выделяем блоки кода и инлайн-код во временные плейсхолдеры (без спецсимволов вроде _ или *)
-        code_blocks = []
-        def save_code_block(match):
-            lang = match.group(1).strip() if match.group(1) else ""
-            code_content = match.group(2)
-            import html
-            escaped_code = html.escape(code_content, quote=False)
-            if lang:
-                tag = f'<pre><code class="language-{lang}">{escaped_code}</code></pre>'
-            else:
-                tag = f'<pre>{escaped_code}</pre>'
-            code_blocks.append(tag)
-            return f"CODEBLOCKPLACEHOLDER{len(code_blocks)-1}"
-
-        text = re.sub(r'```(\w*)[ \t]*(?:\r?\n)?(.*?)(?:\r?\n)?[ \t]*```', save_code_block, text, flags=re.DOTALL)
-
-        inline_codes = []
-        def save_inline_code(match):
-            code_content = match.group(1)
-            import html
-            escaped_code = html.escape(code_content, quote=False)
-            inline_codes.append(f'<code>{escaped_code}</code>')
-            return f"INLINECODEPLACEHOLDER{len(inline_codes)-1}"
-
-        text = re.sub(r'`([^`\n]+)`', save_inline_code, text)
-
-        # Форматируем Markdown-таблицы
-        text = self._format_markdown_tables(text)
-
-        # Форматируем HTML-таблицы
-        text = self._format_html_tables(text)
-
-        # 2. Обрабатываем HTML-разметку, которая могла прийти из RAG или LLM
-        # Конвертируем спойлеры span в tg-spoiler
-        text = re.sub(r'<span\s+class=["\']tg-spoiler["\']>(.*?)</span>', r'<tg-spoiler>\1</tg-spoiler>', text, flags=re.DOTALL | re.IGNORECASE)
-        
+        # 1. Заменяем структурные HTML-теги, которые не поддерживает Telegram
         # Преобразуем li в списки с маркером
         text = re.sub(r'<li[^>]*>(.*?)</li>', r'• \1\n', text, flags=re.DOTALL | re.IGNORECASE)
         # Удаляем контейнеры списков ul и ol
@@ -483,71 +447,24 @@ class AssistantService:
         # Заголовки h1-h6 преобразуем в жирный текст
         text = re.sub(r'<h[1-6][^>]*>(.*?)</h[1-6]>', r'<b>\1</b>\n\n', text, flags=re.DOTALL | re.IGNORECASE)
         
+        # Обрабатываем простые таблицы: строки разделяем переносами, ячейки td/th - пробелами
+        text = re.sub(r'<tr[^>]*>(.*?)</tr>', r'\1\n', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<t[dh][^>]*>(.*?)</t[dh]>', r' \1 ', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'</?(?:table|thead|tbody|tfoot)[^>]*>', '', text, flags=re.IGNORECASE)
+        
         # Удаляем контейнеры div и span
         text = re.sub(r'</?(?:div|span)[^>]*>', '', text, flags=re.IGNORECASE)
 
-        # 3. Преобразуем Markdown разметку в HTML
-        # Заголовки
-        text = re.sub(r'(?:^|\n)(#{1,6})\s+(.*?)(?=\n|$)', r'\n<b>\2</b>\n', text)
-        
-        # Списки
-        text = re.sub(r'(?m)^([ \t]*)[-*+]\s+', r'\1• ', text)
-        
-        # Цитаты blockquotes (группируем подряд идущие)
-        def process_blockquotes(t: str) -> str:
-            lines = t.split('\n')
-            in_quote = False
-            quote_lines = []
-            new_lines = []
-            for line in lines:
-                if line.strip().startswith('>'):
-                    quote_lines.append(line.strip()[1:].lstrip())
-                    in_quote = True
-                else:
-                    if in_quote:
-                        new_lines.append(f"<blockquote>{'\n'.join(quote_lines)}</blockquote>")
-                        quote_lines = []
-                        in_quote = False
-                    new_lines.append(line)
-            if in_quote:
-                new_lines.append(f"<blockquote>{'\n'.join(quote_lines)}</blockquote>")
-            return '\n'.join(new_lines)
-            
-        text = process_blockquotes(text)
-
-        # Ссылки
-        text = re.sub(r'\[([^\]\n]+)\]\((https?://[^\s)]+)\)', r'<a href="\2">\1</a>', text)
-
-        # Выделение (Жирный / Курсив)
-        # Обрабатываем тройные символы в первую очередь
-        text = re.sub(r'\*\*\*(.*?)\*\*\*', r'<b><i>\1</i></b>', text)
-        text = re.sub(r'(?<!\w)___(.*?)___(?!\w)', r'<b><i>\1</i></b>', text)
-        
-        # Затем двойные символы
+        # 2. Обрабатываем markdown
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-        text = re.sub(r'(?<!\w)__(.*?)__(?!\w)', r'<b>\1</b>', text)
-        
-        # Затем одинарные символы
-        text = re.sub(r'\*(?!\s)(.*?)(?<!\s)\*', r'<i>\1</i>', text)
-        text = re.sub(r'(?<!\w)_(?!\s)(.*?)(?<!\s)_(?!\w)', r'<i>\1</i>', text)
-        
-        # Очистка wiki-ссылок
-        text = re.sub(r'\[\[([^\]|]+)\|([^\]]+)\]\]', r'\1', text)
-        text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
-
-        # 4. Восстанавливаем блоки кода и инлайн-код
-        for i, tag in enumerate(inline_codes):
-            text = text.replace(f"INLINECODEPLACEHOLDER{i}", tag)
-        for i, tag in enumerate(code_blocks):
-            text = text.replace(f"CODEBLOCKPLACEHOLDER{i}", tag)
-
-        # 5. Очистка и нормализация переносов строк
         text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Очистка wiki-ссылок вида [[Текст|ссылка]] -> Текст
+        text = re.sub(r'\[\[([^\]|]+)\|([^\]]+)\]\]', r'\1', text)
+        # Очистка wiki-ссылок вида [[Текст]] -> Текст
+        text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
         
-        # 6. Финальная валидация и очистка HTML
-        text = clean_tg_html(text)
-
+        # Устраняем лишние (3+) подряд идущие переносы строк
+        text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
 
     def _extract_links(self, text: str) -> List[str]:
@@ -555,159 +472,3 @@ class AssistantService:
         URL_PATTERN = r"(https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s]*)"
         found = re.findall(URL_PATTERN, text)
         return [l.rstrip(".,!?;:)\u2026\u00bb\u00ab\"'") for l in found if len(l) >= 11]
-
-    def _format_markdown_tables(self, text: str) -> str:
-        """
-        Находит Markdown таблицы в тексте и преобразует их в структурированные списки для Telegram.
-        """
-        if not text:
-            return ""
-            
-        lines = text.split('\n')
-        new_lines = []
-        in_table = False
-        table_lines = []
-        
-        def process_collected_table(tbl_lines):
-            if not tbl_lines:
-                return ""
-            parsed_rows = []
-            for line in tbl_lines:
-                parts = line.split('|')
-                if parts and not parts[0].strip():
-                    parts = parts[1:]
-                if parts and not parts[-1].strip():
-                    parts = parts[:-1]
-                
-                cells = [c.strip() for c in parts]
-                parsed_rows.append(cells)
-                
-            if len(parsed_rows) < 2:
-                return "\n".join(tbl_lines)
-                
-            headers = parsed_rows[0]
-            
-            is_separator = False
-            if len(parsed_rows) > 1:
-                sep_row = parsed_rows[1]
-                if sep_row and all(re.match(r'^[ \t]*:?[-]+:?[ \t]*$', cell) for cell in sep_row):
-                    is_separator = True
-                    
-            data_rows = parsed_rows[2:] if is_separator else parsed_rows[1:]
-            
-            formatted_parts = []
-            for cells in data_rows:
-                if not cells or all(not c for c in cells):
-                    continue
-                if len(cells) < len(headers):
-                    cells += [""] * (len(headers) - len(cells))
-                
-                pairs = []
-                for h, c in zip(headers, cells):
-                    if c:
-                        h_clean = h.rstrip(':').strip()
-                        pairs.append(f"<b>{h_clean}:</b> {c}")
-                        
-                if not pairs:
-                    continue
-                    
-                if len(pairs) == 1:
-                    formatted_parts.append(f"• {pairs[0]}")
-                elif len(pairs) == 2:
-                    formatted_parts.append(f"• {pairs[0]} — {pairs[1]}")
-                else:
-                    indent = "\n  "
-                    formatted_parts.append(f"• {indent.join(pairs)}")
-                    
-            return "\n" + "\n".join(formatted_parts) + "\n"
-
-        for line in lines:
-            is_table_line = '|' in line
-            
-            if is_table_line:
-                if not in_table:
-                    in_table = True
-                    table_lines = [line]
-                else:
-                    table_lines.append(line)
-            else:
-                if in_table:
-                    new_lines.append(process_collected_table(table_lines))
-                    table_lines = []
-                    in_table = False
-                new_lines.append(line)
-                
-        if in_table:
-            new_lines.append(process_collected_table(table_lines))
-            
-        return '\n'.join(new_lines)
-
-    def _format_html_tables(self, text: str) -> str:
-        """
-        Находит HTML таблицы в тексте и преобразует их в структурированные списки для Telegram.
-        """
-        if not text:
-            return ""
-            
-        table_pattern = re.compile(r'<table[^>]*>(.*?)</table>', re.DOTALL | re.IGNORECASE)
-        
-        def replacer(match):
-            table_content = match.group(1)
-            
-            row_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
-            rows = row_pattern.findall(table_content)
-            
-            parsed_rows = []
-            headers = []
-            
-            for row in rows:
-                cell_pattern = re.compile(r'<t[dh][^>]*>(.*?)</t[dh]>', re.DOTALL | re.IGNORECASE)
-                cells = cell_pattern.findall(row)
-                
-                cleaned_cells = []
-                for cell in cells:
-                    c = re.sub(r'\s+', ' ', cell).strip()
-                    cleaned_cells.append(c)
-                
-                if not cleaned_cells or all(not c for c in cleaned_cells):
-                    continue
-                    
-                if '<th>' in row.lower():
-                    headers = cleaned_cells
-                else:
-                    parsed_rows.append(cleaned_cells)
-                    
-            if not headers and len(parsed_rows) > 1:
-                headers = parsed_rows[0]
-                parsed_rows = parsed_rows[1:]
-                
-            formatted_parts = []
-            for cells in parsed_rows:
-                if not cells:
-                    continue
-                
-                if headers and len(headers) == len(cells):
-                    pairs = []
-                    for h, c in zip(headers, cells):
-                        if c:
-                            h_clean = h.rstrip(':').strip()
-                            pairs.append(f"<b>{h_clean}:</b> {c}")
-                    
-                    if len(pairs) == 1:
-                        formatted_parts.append(f"• {pairs[0]}")
-                    elif len(pairs) == 2:
-                        formatted_parts.append(f"• {pairs[0]} — {pairs[1]}")
-                    else:
-                        indent = "\n  "
-                        formatted_parts.append(f"• {indent.join(pairs)}")
-                else:
-                    if len(cells) == 1:
-                        formatted_parts.append(f"• {cells[0]}")
-                    elif len(cells) == 2:
-                        formatted_parts.append(f"• <b>{cells[0]}:</b> {cells[1]}")
-                    else:
-                        formatted_parts.append(f"• <b>{cells[0]}</b> — " + " — ".join(cells[1:]))
-                        
-            return "\n" + "\n".join(formatted_parts) + "\n"
-            
-        return table_pattern.sub(replacer, text)

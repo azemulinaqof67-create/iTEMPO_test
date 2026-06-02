@@ -32,19 +32,9 @@ class LLMReranker:
         self.llm = TextLLMService(config)
 
     async def rerank_batch(self, query: str, documents: List[Dict], top_k: int) -> Tuple[List[Dict], str]:
-        """Batch reranking через один LLM вызов.
-        
-        Если кандидатов мало (≤ rerank_min_docs), пропускаем LLM-реранкер —
-        порядок из RRF/hybrid уже достаточно хорош, а latency критична.
-        """
+        """Batch reranking через один LLM вызов."""
         if not documents:
             return [], "incorrect"
-
-        # Adaptive skip: при малом числе кандидатов реранкер не нужен
-        min_docs = getattr(self.config, "rerank_min_docs", 5)
-        if len(documents) <= min_docs:
-            logger.info(f"Reranker skipped (candidates={len(documents)} <= min_docs={min_docs})")
-            return documents[:top_k], "correct"
 
         docs_list = []
         for i, doc in enumerate(documents[: self.config.rerank_max_docs]):
