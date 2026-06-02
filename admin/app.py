@@ -550,6 +550,20 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         from src.core.constants import COMPANIES
         data_path = Path(_config.data_path)
         
+        CATEGORIES_NAMES = {
+            "hr": "👥 Кадры и мотивация (hr)",
+            "routine": "📋 Внутренний распорядок и регламенты (routine)",
+            "logistics": "🚚 Транспорт и логистика (logistics)",
+            "locations": "📍 Расположение и навигация цехов (locations)",
+            "it_support": "🔧 ИТ-поддержка пользователей (it_support)",
+            "infrastructure": "⚙️ Инфраструктура и ЦОД (infrastructure)",
+            "helpdesk": "🎟 Система заявок Helpdesk (helpdesk)",
+            "social": "🏖 Социальная сфера и отдых (social)",
+            "calendar": "📅 Производственный календарь (calendar)",
+            "company": "🏢 О компании и руководство (company)",
+            "general": "🔌 Корневой раздел (general)"
+        }
+        
         # Нормализуем путь
         normalized_path = path.strip().replace("\\", "/").strip("/")
         
@@ -585,7 +599,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 if item.is_dir():
                     if item.name in allowed_dirs:
                         items.append({
-                            "name": item.name,
+                            "name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
                             "path": item.name,
                             "is_dir": True,
                             "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
@@ -593,7 +607,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         })
                     elif is_super and item.name not in {".chunks_cache"}:
                         items.append({
-                            "name": item.name,
+                            "name": COMPANIES.get(item.name, f"Папка / {item.name}") if item.name != "common" else "Общие документы",
                             "path": item.name,
                             "is_dir": True,
                             "company_name": f"Папка / {item.name}",
@@ -618,7 +632,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 rel_path = str(item.resolve().relative_to(data_path.resolve())).replace("\\", "/")
                 if item.is_dir() and item.name not in {".chunks_cache"}:
                     items.append({
-                        "name": item.name,
+                        "name": CATEGORIES_NAMES.get(item.name, item.name),
                         "path": rel_path,
                         "is_dir": True,
                         "company_name": company_name,
@@ -645,6 +659,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             name = part
             if part in COMPANIES:
                 name = COMPANIES[part]
+            elif part in CATEGORIES_NAMES:
+                name = CATEGORIES_NAMES[part]
             elif part == "common":
                 name = "Общие документы"
                 

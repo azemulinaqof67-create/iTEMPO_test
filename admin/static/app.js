@@ -812,6 +812,24 @@ function showDocUpload() {
   document.getElementById('selectedFile').classList.add('hidden');
   document.getElementById('selectedFile').textContent = '';
   selectedFile = null;
+
+  // Автозаполнение по текущему пути проводника
+  const parts = currentExplorerPath ? currentExplorerPath.split('/') : [];
+  const orgSelect = document.getElementById('uploadOrganization');
+  const catSelect = document.getElementById('uploadCategory');
+
+  if (parts.length > 0 && parts[0]) {
+    const orgValue = parts[0] === 'common' ? 'shared' : parts[0];
+    orgSelect.value = orgValue;
+  } else {
+    orgSelect.selectedIndex = 0; // Дефолт (Общие)
+  }
+
+  if (parts.length > 1 && parts[1]) {
+    catSelect.value = parts[1];
+  } else {
+    catSelect.selectedIndex = 0; // Дефолт (Кадры)
+  }
 }
 
 function hideDocUpload() {
