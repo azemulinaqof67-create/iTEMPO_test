@@ -439,19 +439,26 @@ class ClientManager:
         """
         Создаёт (или возвращает кешированный) Gemini Client.
 
-        Кеш учитывает пару (api_version, api_key), поэтому ротация ключей
-        гарантированно создаёт новый клиент под нужный ключ.
+        Кеш учитывает пару (api_version, api_key) и текущий Event Loop,
+        чтобы предотвратить ошибки "Future attached to a different loop".
 
         Args:
             api_version: Версия API (v1 / v1beta). По умолчанию из конфига.
             api_key: API-ключ. По умолчанию из api_key_manager / конфига.
         """
+        import asyncio
         target_version = api_version or self.config.text_api_version or self._get_api_version_for_model(self.config.text_model)
         resolved_key = api_key or (
             self.api_key_manager.get_current_key() if self.api_key_manager else self.config.gemini_api_key
         )
 
-        cache_key = f"{target_version}::{resolved_key}"
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            loop_id = "sync"
+
+        cache_key = f"{target_version}::{resolved_key}::loop_{loop_id}"
 
         if cache_key not in self._gemini_clients:
             with self._init_lock:
@@ -462,7 +469,7 @@ class ClientManager:
                     except ImportError as e:
                         raise ConfigError("google-genai SDK не установлен") from e
 
-                    logger.debug("    → Создание клиента api_version=%s key=...%s", target_version, resolved_key[-4:])
+                    logger.debug("    → Создание клиента api_version=%s key=...%s loop=%s", target_version, resolved_key[-4:], loop_id)
                     http_options = types.HttpOptions(
                         api_version=target_version, 
                         httpxClient=self.get_gemini_http_client()
@@ -478,13 +485,25 @@ class ClientManager:
 
     def get_gemini_client_for_live_api(self):
         """
-        Thread-safe lazy init Gemini Client для Live API с кешированием.
+        Thread-safe lazy init Gemini Client для Live API с кешированием по Event Loop.
 
         Live API требует v1beta версию API для WebSocket соединений.
         """
-        if self._gemini_live is None:
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            loop_id = "sync"
+
+        if not hasattr(self, '_gemini_live_clients'):
+            self._gemini_live_clients = {}
+
+        cache_key = f"live::loop_{loop_id}"
+
+        if cache_key not in self._gemini_live_clients:
             with self._init_lock:
-                if self._gemini_live is None:
+                if cache_key not in self._gemini_live_clients:
                     # Live API требует v1beta для WebSocket соединений
                     http_options = types.HttpOptions(
                         api_version=self.config.live_api_version,
@@ -493,13 +512,13 @@ class ClientManager:
                     api_key = (
                         self.api_key_manager.get_current_key() if self.api_key_manager else self.config.gemini_api_key
                     )
-                    self._gemini_live = genai.Client(api_key=api_key, http_options=http_options)
-                    logger.debug(
-                        "    → Gemini Live API Client создан (api_version=%s)",
-                        self.config.live_api_version,
-                    )
+                    client = genai.Client(api_key=api_key, http_options=http_options)
+                    self._gemini_live_clients[cache_key] = client
+                    
+                    if self._gemini_live is None:
+                        self._gemini_live = client
 
-        return self._gemini_live
+        return self._gemini_live_clients[cache_key]
 
     def _get_api_version_for_model(self, model_name: str) -> str:
         """
