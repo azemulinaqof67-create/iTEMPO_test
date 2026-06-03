@@ -4,6 +4,7 @@ from qdrant_client import models
 from src.models.state import QueryIntent
 from src.rag.retrieval.search import SearchService
 from src.core.config import Config
+from src.utils.company_mapper import get_full_company_names
 
 logger = logging.getLogger(__name__)
 
@@ -29,34 +30,18 @@ class FilteredRAGTool:
             is_topic_shift = intent_data.is_topic_shift
 
             if company_id and not is_topic_shift:
-                # Маппинг коротких названий в официальные
-                full_names_map = {
-                    "ПТФК Технотрон": ["АО \"ПТФК \"Технотрон\"", "АО «ПТФК «ТЕХНОТРОН»"],
-                    "technotron": ["АО \"ПТФК \"Технотрон\"", "АО «ПТФК «ТЕХНОТРОН»"],
-                    "Метиз": ["ООО \"Технотрон-Метиз\"", "ООО «Технотрон-Метиз»"],
-                    "metiz": ["ООО \"Технотрон-Метиз\"", "ООО «Технотрон-Метиз»"],
-                    "НТЗ": ["АО \"НТЗ \"ТЭМ-ПО\"", "АО «НТЗ «ТЭМ-ПО»"],
-                    "ntz": ["АО \"НТЗ \"ТЭМ-ПО\"", "АО «НТЗ «ТЭМ-ПО»"],
-                    "ИТЗ": ["АО \"ИТЗ\"", "АО «ИТЗ»"],
-                    "itz": ["АО \"ИТЗ\"", "АО «ИТЗ»"],
-                    "КМК": ["АО \"КМК \"ТЭМПО\"", "АО «КМК «ТЭМПО»"],
-                    "kmk": ["АО \"КМК \"ТЭМПО\"", "АО «КМК «ТЭМПО»"],
-                    "ЗТЭО": ["АО \"ПТФК \"ЗТЭО\"", "АО «ПТФК «ЗТЭО»"],
-                    "zteo": ["АО \"ПТФК \"ЗТЭО\"", "АО «ПТФК «ЗТЭО»"],
-                    "КЗМК": ["АО «КЗМК «ТЭМПО»", "АО \"КЗМК \"ТЭМПО\""],
-                    "kzmk": ["АО «КЗМК «ТЭМПО»", "АО \"КЗМК \"ТЭМПО\""],
-                    "АЙТИ": ["ООО \"АЙТИ \"ТЭМПО\"", "ООО «АЙТИ «ТЭМПО»"],
-                    "it": ["ООО \"АЙТИ \"ТЭМПО\"", "ООО «АЙТИ «ТЭМПО»"]
-                }
-                full_names = full_names_map.get(company_id, [])
-                if isinstance(full_names, str):
-                    full_names = [full_names]
+                # Получаем официальные названия из единого маппера
+                full_names = get_full_company_names(company_id)
+                if not full_names:
+                    full_names = [company_id]
                 
                 # Ищем документы конкретной компании ИЛИ общие документы холдинга
                 should_matches = [
                     models.FieldCondition(key="company", match=models.MatchText(text=company_id)),
                     models.FieldCondition(key="company", match=models.MatchValue(value="ГК «ТЭМПО»")),
-                    models.FieldCondition(key="department", match=models.MatchValue(value="General"))
+                    models.FieldCondition(key="department", match=models.MatchValue(value="General")),
+                    models.FieldCondition(key="company_tag", match=models.MatchValue(value="shared")),
+                    models.FieldCondition(key="metadata.organization", match=models.MatchValue(value="shared"))
                 ]
                 
                 for name in full_names:

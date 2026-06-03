@@ -53,7 +53,7 @@ class AssistantService:
         self.search = SearchService(config) # Остается для обратной совместимости
         self.text_llm = TextLLMService(config)
         self.audio_llm = AudioLLMService(config)
-        self.contact_search = ContactSearchTool()
+        self.contact_search = ContactSearchTool(db_path=str(config.data_path / "contacts.db"))
         self.ticketing = TicketingService(config)
         self.chat_history = ChatHistoryManager(config) if config.chat_history_enabled else None
         self.document_sender = DocumentSender()

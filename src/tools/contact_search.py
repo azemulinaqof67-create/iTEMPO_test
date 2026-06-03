@@ -2,11 +2,12 @@ import aiosqlite
 import logging
 from typing import Optional, List, Dict, Any
 from rapidfuzz import process, fuzz, utils
+from src.utils.company_mapper import get_company_keywords
 
 logger = logging.getLogger(__name__)
 
 class ContactSearchTool:
-    def __init__(self, db_path: str = "data/shared/contacts.db"):
+    def __init__(self, db_path: str = "data/contacts.db"):
         self.db_path = db_path
 
     async def search(self, target_person: str, target_company: Optional[str] = None) -> str:
@@ -31,47 +32,45 @@ class ContactSearchTool:
                 if not rows:
                     return "База контактов пуста."
 
-                # Маппинг коротких ID компаний в ключевые слова для поиска в поле company
-                COMPANY_ID_TO_KEYWORDS = {
-                    "technotron": ["технотрон"],
-                    "metiz":      ["метиз"],
-                    "kmk":        ["кмк", "тэмпо"],
-                    "ntz":        ["нтз", "тэм-по"],
-                    "itz":        ["итз"],
-                    "kzmk":       ["кзмк"],
-                    "zteo":       ["зтэо"],
-                    "td":         ["тд", "торговый"],
-                    "sks":        ["скс"],
-                    "port":       ["порт"],
-                    "it":         ["айти"],
-                }
                 # Подготавливаем слова для бонус-фильтра по компании
                 target_comp_words = []
                 if target_company:
-                    comp_lower = target_company.strip().lower()
-                    if comp_lower in COMPANY_ID_TO_KEYWORDS:
-                        # Использовать русские ключевые слова вместо ID
-                        target_comp_words = COMPANY_ID_TO_KEYWORDS[comp_lower]
+                    mapped_keywords = get_company_keywords(target_company)
+                    if mapped_keywords:
+                        target_comp_words = mapped_keywords
                     else:
                         target_comp_words = [w.strip().lower() for w in target_company.split() if len(w.strip()) > 2]
 
                 # 2. Нечеткий поиск
                 results_with_scores = []
                 for row in rows:
-                    # Считаем скор для каждого поля отдельно
-                    scores = [
-                        fuzz.WRatio(target_person, row['full_name'], processor=utils.default_process),
-                        fuzz.WRatio(target_person, row['position'], processor=utils.default_process),
-                        fuzz.WRatio(target_person, row['department'], processor=utils.default_process)
-                    ]
-                    # Дополнительно добавим partial_ratio для ФИО, чтобы лучше ловить частичные совпадения (одно слово)
-                    partial_score = fuzz.partial_ratio(target_person, row['full_name'], processor=utils.default_process)
+                    name_score = fuzz.WRatio(target_person, row['full_name'], processor=utils.default_process)
+                    name_partial_score = fuzz.partial_ratio(target_person, row['full_name'], processor=utils.default_process)
                     
-                    max_score = max(max(scores), partial_score)
+                    scores = [
+                        name_score,
+                        fuzz.WRatio(target_person, row['position'], processor=utils.default_process),
+                        fuzz.WRatio(target_person, row['department'], processor=utils.default_process),
+                        name_partial_score,
+                        fuzz.partial_ratio(target_person, row['position'], processor=utils.default_process),
+                        fuzz.partial_ratio(target_person, row['department'], processor=utils.default_process)
+                    ]
+                    
+                    # Проверка совпадения номера телефона
+                    # Требуем минимум 4 цифры и только точное совпадение, чтобы не срабатывать
+                    # на трёхзначные подстроки в именах/фразах (например, '100 сотрудников' → '4100').
+                    phone_score = 0
+                    target_digits = "".join([c for c in target_person if c.isdigit()])
+                    phone_digits = "".join([c for c in (row['phone'] or "") if c.isdigit()])
+                    if len(target_digits) >= 4 and phone_digits and target_digits == phone_digits:
+                        phone_score = 100
+
+                    max_score = max(max(scores), phone_score)
                     
                     if max_score >= 70: # Порог вхождения
                         # СТРОГИЙ ФИЛЬТР ПО КОМПАНИИ
-                        if target_comp_words:
+                        # Если совпадение по имени очень высокое (>90), игнорируем фильтр компании
+                        if target_comp_words and not (name_score >= 90 or name_partial_score >= 90):
                             row_comp = (row['company'] or "").lower()
                             
                             # Проверяем пересечение слов

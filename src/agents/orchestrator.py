@@ -17,7 +17,7 @@ class AgentOrchestrator:
     def __init__(self, config: Config):
         self.config = config
         self.router = IntentRouter(config)
-        self.contact_tool = ContactSearchTool()
+        self.contact_tool = ContactSearchTool(db_path=str(config.data_path / "contacts.db"))
         self.rag_tool = FilteredRAGTool()
         self.weather_tool = WeatherSearchTool(config.default_city)
         self.llm_service = TextLLMService(config)
@@ -232,12 +232,8 @@ class AgentOrchestrator:
 
     def route_after_contacts(self, state: AgentState) -> List[str]:
         """Решает, нужно ли идти в базу знаний после контактов."""
-        query = state["query"].lower()
-        # Маркеры сложных вопросов
-        markers = ["обед", "график", "отпуск", "где", "находится", "кабинет", "расположение", "как найти", "во сколько", "время"]
-        
-        if any(m in query for m in markers) and state.get("extracted_context"):
-            logger.info(f"--- MULTI-HOP: ROUTING TO RAG FOR EXTRA INFO (Context: {state['extracted_context']}) ---")
+        if state.get("intent") and state["intent"].requires_rag:
+            logger.info("--- MULTI-HOP: ROUTING TO RAG FOR EXTRA INFO (requires_rag is True) ---")
             return ["search_documents"]
             
         return ["generate_answer"]
@@ -253,14 +249,12 @@ class AgentOrchestrator:
             
         results = await self.rag_tool.search(query_to_search, state["intent"])
         
-        existing_results = state.get("search_results", [])
-        
         # Передаем LLM подсказку о синонимах и отделе
         system_note = ""
         if state.get("extracted_context"):
             system_note = f"\n[СИСТЕМНОЕ СООБЩЕНИЕ: Обрати внимание, что отдел сотрудника ({state['extracted_context']}) может называться в документах иначе (например, 'Бухгалтерия', 'ИТР' и т.д.). Ищи соответствующие строки.]\n"
             
-        return {"search_results": existing_results + [f"{system_note}ДОКУМЕНТЫ ИЗ БАЗЫ ЗНАНИЙ:\n{results}"]}
+        return {"search_results": [f"{system_note}ДОКУМЕНТЫ ИЗ БАЗЫ ЗНАНИЙ:\n{results}"]}
 
 
     async def search_weather(self, state: AgentState) -> Dict[str, Any]:
