@@ -54,3 +54,4 @@ class AgentState(TypedDict):
     extracted_context: Optional[str] # Извлеченный контекст из промежуточных шагов (например, отдел сотрудника)
     search_results: Annotated[List[str], clearable_add]
     answer: Optional[str]
+    conversation_summary: Optional[str] # Краткое резюме истории диалога для LLM

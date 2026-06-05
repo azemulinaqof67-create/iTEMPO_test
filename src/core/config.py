@@ -264,6 +264,9 @@ class MemoryConfig:
     summarization_threshold: int = 50
     max_context_tokens: int = 8000
     enable_auto_summarization: bool = True
+    messages_summarize_threshold: int = 20
+    messages_keep_recent: int = 10
+    max_chars_per_history_message: int = 2000
 
     @classmethod
     def from_env(cls, current: Optional["MemoryConfig"] = None, yaml_data: Optional[dict] = None) -> "MemoryConfig":
@@ -308,6 +311,9 @@ class MemoryConfig:
             summarization_threshold=_get_int("SUMMARIZATION_THRESHOLD", "summarization_threshold", c.summarization_threshold),
             max_context_tokens=_get_int("MAX_CONTEXT_TOKENS", "max_context_tokens", c.max_context_tokens),
             enable_auto_summarization=_get_bool("ENABLE_AUTO_SUMMARIZATION", "enable_auto_summarization", c.enable_auto_summarization),
+            messages_summarize_threshold=_get_int("MESSAGES_SUMMARIZE_THRESHOLD", "messages_summarize_threshold", c.messages_summarize_threshold),
+            messages_keep_recent=_get_int("MESSAGES_KEEP_RECENT", "messages_keep_recent", c.messages_keep_recent),
+            max_chars_per_history_message=_get_int("MAX_CHARS_PER_HISTORY_MESSAGE", "max_chars_per_history_message", c.max_chars_per_history_message),
         )
 
 

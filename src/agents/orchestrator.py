@@ -1,8 +1,9 @@
 import logging
 from typing import Dict, Any, List, Optional
+from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage, SystemMessage
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from src.core.config import Config
 from src.models.state import AgentState, QueryIntent
 from src.agents.router import IntentRouter
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 class AgentOrchestrator:
     def __init__(self, config: Config):
         self.config = config
+        self.database_url = config.database_url
         self.router = IntentRouter(config)
         self.contact_tool = ContactSearchTool(config=config)
         self.rag_tool = FilteredRAGTool()
@@ -26,13 +28,16 @@ class AgentOrchestrator:
         """Инициализация инструментов."""
         await self.rag_tool.initialize()
         
-        # 1. Инициализация памяти (Checkpoint)
-        self.memory = MemorySaver()
+        # 1. Инициализация памяти (PostgreSQL Checkpointer)
+        self._memory_ctx = AsyncPostgresSaver.from_conn_string(self.database_url)
+        self.memory = await self._memory_ctx.__aenter__()
+        await self.memory.setup()   # создаёт таблицы checkpoints, writes, migrations
         
         # Инициализация графа
         workflow = StateGraph(AgentState)
         
         # Добавление узлов
+        workflow.add_node("summarize_if_needed", self.summarize_if_needed)
         workflow.add_node("analyze_query", self.analyze_query)
         workflow.add_node("search_contacts", self.search_contacts)
         workflow.add_node("search_documents", self.search_documents)
@@ -40,7 +45,8 @@ class AgentOrchestrator:
         workflow.add_node("generate_answer", self.generate_answer)
         
         # Настройка ребер
-        workflow.add_edge(START, "analyze_query")
+        workflow.add_edge(START, "summarize_if_needed")
+        workflow.add_edge("summarize_if_needed", "analyze_query")
         
         # Маршрутизация после анализа
         workflow.add_conditional_edges(
@@ -71,6 +77,76 @@ class AgentOrchestrator:
         
         # 2. Компиляция с чекпоинтером
         self.app = workflow.compile(checkpointer=self.memory)
+
+    async def summarize_if_needed(self, state: AgentState) -> Dict[str, Any]:
+        """
+        Узел LangGraph, который сжимает историю диалога, если она превышает порог.
+        """
+        messages = state.get("messages", [])
+        
+        # Извлекаем лимиты из конфига
+        threshold = self.config.memory.messages_summarize_threshold
+        keep_recent = self.config.memory.messages_keep_recent
+        max_chars = self.config.memory.max_chars_per_history_message
+        
+        if len(messages) <= threshold:
+            return {}
+
+        logger.info(f"--- ROLLING SUMMARY: history size {len(messages)} exceeds threshold {threshold} ---")
+        
+        # Оставляем keep_recent последних сообщений в графе.
+        # Предыдущие сообщения суммаризируем.
+        summarize_count = len(messages) - keep_recent
+        to_summarize = messages[:summarize_count]
+        
+        # Формируем текст для суммаризации
+        history_parts = []
+        for m in to_summarize:
+            msg_type = getattr(m, 'type', '')
+            role = "Пользователь" if msg_type in ('human', 'user') else "Ассистент"
+            content = m.content if hasattr(m, 'content') else str(m)
+            # Обрезаем очень длинные сообщения
+            if len(content) > max_chars:
+                content = content[:max_chars] + "... [сообщение обрезано]"
+            history_parts.append(f"{role}: {content}")
+            
+        history_text = "\n".join(history_parts)
+        
+        existing_summary = state.get("conversation_summary", "")
+        summary_prompt = f"""Ниже представлена история диалога и, возможно, предыдущее резюме.
+Создай обновленное краткое резюме диалога на русском языке. Оно должно содержать ключевые факты, упомянутые имена, компании, контакты, интересы пользователя и обсуждаемые темы.
+Сделай резюме максимально информативным и компактным.
+
+Предыдущее резюме (если есть):
+{existing_summary}
+
+Новые сообщения для добавления в резюме:
+{history_text}
+
+Обновленное краткое резюме (на русском):"""
+
+        try:
+            new_summary = await self.llm_service.generate(summary_prompt, temperature=0.3)
+            new_summary = new_summary.strip()
+            logger.info(f"--- ROLLING SUMMARY COMPLETED. New summary length: {len(new_summary)} ---")
+            
+            # Удаляем старые сообщения
+            delete_actions = []
+            for m in to_summarize:
+                msg_id = getattr(m, 'id', None)
+                if msg_id:
+                    delete_actions.append(RemoveMessage(id=msg_id))
+            
+            # Добавим системное сообщение с новым резюме
+            summary_msg = SystemMessage(content=f"КОНТЕКСТ ДИАЛОГА (РЕЗЮМЕ):\n{new_summary}")
+            
+            return {
+                "conversation_summary": new_summary,
+                "messages": delete_actions + [summary_msg]
+            }
+        except Exception as e:
+            logger.error(f"Rolling summary failed: {e}")
+            return {}
 
     async def _decontextualize_query(self, state: AgentState) -> str:
         """
@@ -125,14 +201,19 @@ class AgentOrchestrator:
 
         logger.info("--- DECONTEXTUALIZING QUERY ---")
         
+        summary = state.get("conversation_summary")
+        summary_prefix = f"Резюме предыдущего разговора: {summary}\n" if summary else ""
+
         history_parts = []
         for m in messages[-10:]:
             # LangChain message types: 'human'/'user' for user, 'ai'/'assistant' for bot
             msg_type = getattr(m, 'type', '')
+            if msg_type == 'system':
+                continue
             role = "User" if msg_type in ('human', 'user') else "Assistant"
             content = m.content if hasattr(m, 'content') else str(m)
             history_parts.append(f"{role}: {content}")
-        history_text = "\n".join(history_parts)
+        history_text = summary_prefix + "\n".join(history_parts)
         
         prompt = f"""Ты — AI-редактор контекста. Твоя задача — переформулировать текущий запрос пользователя так, чтобы он был понятен без истории диалога.
 
@@ -341,13 +422,15 @@ class AgentOrchestrator:
         # Склеиваем все результаты поиска в один текстовый блок
         context_block = "\n\n===\n\n".join(state.get("search_results", []))
 
-        # Формируем блок истории диалога для LLM (5 последних сообщений)
+        # Формируем блок истории диалога для LLM (10 последних сообщений)
         history_block = ""
         messages = state.get("messages", [])
         if messages:
             history_parts = []
             for m in messages[-10:]:
                 msg_type = getattr(m, 'type', '')
+                if msg_type == 'system':
+                    continue
                 role = "Пользователь" if msg_type in ('human', 'user') else "Ассистент"
                 content = m.content if hasattr(m, 'content') else str(m)
                 history_parts.append(f"{role}: {content}")
@@ -358,9 +441,15 @@ class AgentOrchestrator:
         user_name = state.get("user_name")
         user_name_block = f"\nИМЯ ПОЛЬЗОВАТЕЛЯ: {user_name}" if user_name else ""
         
+        summary_block = ""
+        summary = state.get("conversation_summary")
+        if summary:
+            summary_block = f"\nКРАТКОЕ РЕЗЮМЕ ПРЕДЫДУЩЕЙ БЕСЕДЫ:\n{summary}\n"
+        
         prompt = f"""Ты — интеллектуальный корпоративный ассистент ГК «ТЭМПО».
-Твоя задача: ответить на вопрос пользователя, опираясь на предоставленный контекст и историю диалога.
+Твоя задача: ответить на вопрос пользователя, опираясь на предоставленный контекст, историю диалога и резюме беседы.
 {user_name_block}
+{summary_block}
 КОНТЕКСТ ДЛЯ ОТВЕТА:
 {context_block}
 {history_block}
@@ -457,48 +546,63 @@ RULE 2: Use retrieved database context ONLY for external facts.
         result = await self.app.ainvoke(initial_input, config=config)
         return result
 
-    async def clear_memory(self, thread_id: str):
-        """Принудительно очищает оперативную память (LangGraph) для конкретного пользователя."""
+    async def inject_voice_turn(self, thread_id: str, user_text: str, assistant_text: str):
+        """
+        Записывает голосовое взаимодействие в LangGraph MemorySaver,
+        чтобы текстовый канал мог видеть его в истории диалога.
+        
+        Это решает проблему: голос → текст ассистент не помнит, что было сказано голосом.
+        """
         try:
-            # Всегда используем прямую очистку словарей, так как штатный delete_thread 
-            # в некоторых версиях падает с ошибкой 'unhashable type: dict'
-            if hasattr(self.memory, 'storage') and isinstance(self.memory.storage, dict):
-                keys_to_delete = []
-                for k in list(self.memory.storage.keys()):
-                    try:
-                        if isinstance(k, tuple) and len(k) > 0 and str(k[0]) == str(thread_id):
-                            keys_to_delete.append(k)
-                        elif isinstance(k, str) and str(thread_id) in k:
-                            keys_to_delete.append(k)
-                    except Exception:
-                        pass
-                for k in keys_to_delete:
-                    del self.memory.storage[k]
-                    
-            if hasattr(self.memory, 'writes') and isinstance(self.memory.writes, dict):
-                keys_to_delete = []
-                for k in list(self.memory.writes.keys()):
-                    try:
-                        if isinstance(k, tuple) and len(k) > 0 and str(k[0]) == str(thread_id):
-                            keys_to_delete.append(k)
-                        elif isinstance(k, str) and str(thread_id) in k:
-                            keys_to_delete.append(k)
-                    except Exception:
-                        pass
-                for k in keys_to_delete:
-                    del self.memory.writes[k]
-                    
-            logger.info(f"LangGraph memory safely cleared for thread_id: {thread_id}")
+            config = {"configurable": {"thread_id": thread_id}}
+            voice_messages = [
+                HumanMessage(content=f"[Голос] {user_text}"),
+                AIMessage(content=f"[Голос] {assistant_text}"),
+            ]
+            await self.app.aupdate_state(
+                config,
+                {"messages": voice_messages},
+            )
+            logger.info(f"Voice turn injected into LangGraph memory for thread_id={thread_id}: user={user_text[:60]!r}")
         except Exception as e:
-            logger.error(f"Error safely clearing LangGraph memory for thread_id {thread_id}: {e}")
+            # Некритичная ошибка — голос уже отправлен, просто не запишем в MemorySaver
+            logger.warning(f"Failed to inject voice turn into LangGraph memory: {e}")
+
+    async def clear_memory(self, thread_id: str):
+        """Принудительно очищает историю диалога в PostgreSQL для конкретного пользователя."""
+        try:
+            if hasattr(self, 'memory') and hasattr(self.memory, 'adelete_thread'):
+                await self.memory.adelete_thread(thread_id)
+                logger.info(f"LangGraph PG memory safely cleared via adelete_thread for thread_id: {thread_id}")
+            else:
+                logger.warning("memory.adelete_thread is not available")
+        except Exception as e:
+            logger.error(f"Error clearing LangGraph PG memory for thread_id {thread_id}: {e}")
+
+    async def close(self):
+        """Закрыть соединение с PostgreSQL (при остановке сервера)."""
+        try:
+            if hasattr(self, '_memory_ctx'):
+                await self._memory_ctx.__aexit__(None, None, None)
+                logger.info("AsyncPostgresSaver connection closed successfully.")
+        except Exception as e:
+            logger.warning(f"Error closing AsyncPostgresSaver connection: {e}")
 
 if __name__ == "__main__":
     import asyncio
+    import sys
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     async def test():
         cfg = Config.from_env()
         orch = AgentOrchestrator(cfg)
-        # Тест на контекст
-        print(await orch.process_query("Дай номер Зиннатуллина из АЙТИ", "user_1"))
-        print(await orch.process_query("А в каком отделе он работает?", "user_1"))
+        await orch.initialize()
+        try:
+            # Тест на контекст
+            print(await orch.process_query("Дай номер Зиннатуллина из АЙТИ", "user_1"))
+            print(await orch.process_query("А в каком отделе он работает?", "user_1"))
+        finally:
+            await orch.close()
 
     asyncio.run(test())

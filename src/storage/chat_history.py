@@ -801,6 +801,42 @@ class ChatHistoryManager:
                 f"SELECT COUNT(*) FROM chat_messages m {where}", *params
             ) or 0
 
+    def truncate_history_by_tokens(self, history: List[Dict[str, str]], max_tokens: int) -> List[Dict[str, str]]:
+        """
+        Ограничивает историю сообщений лимитом токенов.
+        Сохраняет резюме (первые 2 сообщения, если это резюме) и оставляет самые свежие сообщения.
+        """
+        if not history:
+            return []
+
+        def estimate_tokens(text: str) -> int:
+            return len(text) // 4 + 1
+
+        # Определим, есть ли в начале резюме
+        has_summary = len(history) >= 2 and "РЕЗЮМЕ ПРЕДЫДУЩЕГО РАЗГОВОРА" in history[0]["content"]
+
+        summary_msgs = history[:2] if has_summary else []
+        chat_msgs = history[2:] if has_summary else history
+
+        # Подсчитаем токен-бюджет
+        summary_tokens = sum(estimate_tokens(m["content"]) for m in summary_msgs)
+        available_tokens = max_tokens - summary_tokens
+        if available_tokens < 100:  # Если резюме съело всё, выделим минимальный бюджет
+            available_tokens = 100
+
+        # Идем с конца chat_msgs и добавляем в результат, пока не превысим лимит
+        kept_chat_msgs = []
+        current_tokens = 0
+        for msg in reversed(chat_msgs):
+            msg_tokens = estimate_tokens(msg["content"])
+            if current_tokens + msg_tokens > available_tokens:
+                break
+            kept_chat_msgs.append(msg)
+            current_tokens += msg_tokens
+
+        kept_chat_msgs.reverse()
+        return summary_msgs + kept_chat_msgs
+
 
 # ─── Хелперы авторизации ───────────────────────────────────────────────────
 

@@ -77,6 +77,14 @@ class AssistantService:
         await self.search.initialize()
         logger.info("--- ASSISTANT SERVICE READY ---")
 
+    async def close(self):
+        """Закрытие ресурсов при остановке сервера."""
+        logger.info("Closing AssistantService resources...")
+        if self.orchestrator:
+            await self.orchestrator.close()
+        if self.chat_history:
+            await self.chat_history.close()
+
     def reload_services(self):
         """
         Горячая перезагрузка всех сервисов при изменении конфигурации.
@@ -405,12 +413,28 @@ class AssistantService:
                 await self.chat_history.save_message(session_id, platform, "user", user_query or "[Голос]", metadata)
                 await self.chat_history.save_message(session_id, platform, "assistant", transcript or "[Голос]", metadata)
             
+            # Синхронизируем голосовую историю с LangGraph-памятью оркестратора,
+            # чтобы текстовый канал мог видеть этот обмен в истории диалога.
+            if session_id and user_query:
+                await self.orchestrator.inject_voice_turn(
+                    thread_id=session_id,
+                    user_text=user_query,
+                    assistant_text=transcript or "[Голос]",
+                )
+            
             return audio_response, self._sanitize_response(transcript), list(extracted_links)
         else:
             audio_response, transcript = await self.audio_llm.process_voice_from_pcm(pcm_data, current_system_prompt, format=audio_format)
             if self.chat_history and session_id:
                 await self.chat_history.save_message(session_id, platform, "user", "[Голос]", {"voice": True})
                 await self.chat_history.save_message(session_id, platform, "assistant", transcript or "[Голос]", {"voice": True})
+            # Синхронизируем голосовую историю с LangGraph-памятью оркестратора
+            if session_id and transcript:
+                await self.orchestrator.inject_voice_turn(
+                    thread_id=session_id,
+                    user_text="[Голос]",
+                    assistant_text=transcript,
+                )
             return audio_response, self._sanitize_response(transcript), list(extracted_links)
 
     def _truncate_context_by_chunks(self, chunks: List[str], max_chars: int) -> List[str]:

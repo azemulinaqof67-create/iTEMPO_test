@@ -207,6 +207,9 @@ memory:
   summarization_threshold: 50
   max_context_tokens: 8000
   enable_auto_summarization: true
+  messages_summarize_threshold: 20
+  messages_keep_recent: 10
+  max_chars_per_history_message: 2000
 
 # ============================================
 # ОБЩИЕ НАСТРОЙКИ ПРИЛОЖЕНИЯ

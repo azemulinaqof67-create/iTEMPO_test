@@ -5,7 +5,13 @@
 """
 import argparse
 import os
+import sys
+import asyncio
 import warnings
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from dotenv import load_dotenv
 
 # Игнорируем SyntaxWarning от сторонних библиотек (например, pydub в Python 3.12)

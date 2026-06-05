@@ -95,6 +95,14 @@ async def shutdown_event():
     """Очистка ресурсов при остановке сервера"""
     logger.info("--- ОСТАНОВКА СЕРВЕРА ---")
 
+    global _assistant
+    if _assistant:
+        try:
+            await _assistant.close()
+            logger.info("AssistantService closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing AssistantService: {e}")
+
     # Закрываем все клиенты для предотвращения ошибок в __del__
     try:
         from src.core.clients import ClientManager

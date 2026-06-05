@@ -55,6 +55,7 @@ async def main():
     parser.add_argument("--force", "-f", action="store_true", help="Принудительное полное обновление базы (игнорировать инкрементальный режим)")
     parser.add_argument("--incremental", "-i", action="store_true", help="Принудительное инкрементальное обновление")
     parser.add_argument("--clear-cache", action="store_true", help="Очистить кэш чанков перед запуском")
+    parser.add_argument("--skip-contacts", action="store_true", help="Пропустить векторизацию базы контактов в Qdrant")
     args = parser.parse_args()
 
     try:
@@ -93,7 +94,22 @@ async def main():
     if use_incremental:
         changed_files = [f for f in files if hasher.has_changed(f)]
         if not changed_files:
-            print("\n[OK] Изменений не найдено. База актуальна.")
+            print("\n[OK] Изменений не найдено. База знаний актуальна. Пропускаем Этапы 1-2.")
+            if not args.chunk_only and not args.skip_contacts:
+                print("\n" + "=" * 60)
+                print("ЭТАП 3: ВЕКТОРИЗАЦИЯ КОНТАКТОВ")
+                print("=" * 60)
+                try:
+                    from scripts.migrate_contacts_to_qdrant import migrate as migrate_contacts
+                    await migrate_contacts(config=config)
+                except Exception as e:
+                    print(f"❌ Ошибка при векторизации контактов: {e}")
+            else:
+                if args.skip_contacts:
+                    print("\n[INFO] Векторизация контактов пропущена (--skip-contacts).")
+            
+            from src.core.clients import ClientManager
+            ClientManager.get_instance(config).close_all()
             return
         print(f"Изменённых документов для обработки: {len(changed_files)}")
         files = changed_files
@@ -192,9 +208,23 @@ async def main():
             hasher.update_hash(f)
         hasher.save()
 
+    # ========================================
+    # ЭТАП 3: ВЕКТОРИЗАЦИЯ КОНТАКТОВ
+    # ========================================
+    if not args.chunk_only and not args.skip_contacts:
+        print("\n" + "=" * 60)
+        print("ЭТАП 3: ВЕКТОРИЗАЦИЯ КОНТАКТОВ")
+        print("=" * 60)
+        try:
+            from scripts.migrate_contacts_to_qdrant import migrate as migrate_contacts
+            await migrate_contacts(config=config)
+        except Exception as e:
+            print(f"❌ Ошибка при векторизации контактов: {e}")
+    elif args.skip_contacts:
+        print("\n[INFO] Векторизация контактов пропущена (--skip-contacts).")
+
     # Закрытие клиентов
     from src.core.clients import ClientManager
-
     ClientManager.get_instance(config).close_all()
 
     print("\n" + "=" * 60)
@@ -203,4 +233,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\n⚠️ Процесс обработки прерван пользователем (Ctrl+C). Корректное завершение и закрытие ресурсов...")
+        try:
+            from src.core.clients import ClientManager
+            ClientManager.get_instance().close_all()
+            print("[OK] Локальные клиенты Qdrant успешно закрыты, база данных разблокирована.")
+        except Exception as e:
+            print(f"⚠️ Не удалось корректно закрыть клиентов: {e}")

@@ -1240,4 +1240,6 @@ async def run_max_bot(config: Config, assistant: Optional[AssistantService] = No
 
     finally:
         await client.close()
+        if assistant:
+            await assistant.close()
         logger.info("MAX бот остановлен.")

@@ -1185,11 +1185,19 @@ def run_bot(
     import threading
 
     is_main_thread = threading.current_thread() is threading.main_thread()
-    if not is_main_thread:
-        # Увеличиваем количество повторных попыток для серверной среды
-        application.run_polling(stop_signals=None, bootstrap_retries=10)
-    else:
-        application.run_polling(bootstrap_retries=10)
+    try:
+        if not is_main_thread:
+            # Увеличиваем количество повторных попыток для серверной среды
+            application.run_polling(stop_signals=None, bootstrap_retries=10)
+        else:
+            application.run_polling(bootstrap_retries=10)
+    finally:
+        # Корректно закрываем ассистента и освобождаем пулы соединений
+        if loop.is_running():
+            # Если петля работает, создаем задачу
+            loop.create_task(assistant.close())
+        else:
+            loop.run_until_complete(assistant.close())
 
 
 async def _update_database(config: Config):
