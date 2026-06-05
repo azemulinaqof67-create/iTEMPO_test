@@ -1001,9 +1001,19 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if all_links:
                     # Ограничиваем количество ссылок до 3, чтобы не перегружать сообщение
                     top_links = list(all_links)[:3]
-                    links_list = "\n".join(top_links)
+                    
+                    formatted_links = []
+                    for link in top_links:
+                        if 'yandex' in link or 'maps' in link or '2gis' in link or 'CPuEm4MY' in link:
+                            formatted_links.append(f"🗺️ <a href='{link}'>Открыть карту / маршрут</a>")
+                        elif 'price' in link or 'прайс' in link.lower() or '.pdf' in link:
+                            formatted_links.append(f"📄 <a href='{link}'>Открыть документ</a>")
+                        else:
+                            formatted_links.append(f"🔗 <a href='{link}'>Перейти по ссылке</a>")
+                            
+                    links_list = "\n\n".join(formatted_links)
                     await update.message.reply_text(
-                        f"-> <b>Link / Route:</b>\n\n{links_list}",
+                        f"📎 <b>Прикрепленные материалы:</b>\n\n{links_list}",
                         parse_mode="HTML",
                         disable_web_page_preview=False,
                     )

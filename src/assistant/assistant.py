@@ -280,7 +280,7 @@ class AssistantService:
             clean_context = self.search.clean_scores(result.chunks)
 
             history = None
-            if history_messages:
+            if history_messages and self.chat_history:
                 history = self.chat_history.format_history_for_llm(history_messages, summary)
                 history = self.chat_history.truncate_history_by_tokens(history, self.config.max_context_tokens)
 
@@ -367,10 +367,13 @@ class AssistantService:
             # Маппинг для промпта
             company_display_name = COMPANY_NAMES.get(user_company, user_company) if user_company else "ГК ТЭМПО"
             
+            tool_template = self.audio_llm.model_config.tool_prompt_template if self.audio_llm.model_config else ""
+            sys_template = self.audio_llm.model_config.system_prompt_template if self.audio_llm.model_config else "{context}"
+            
             if use_rag:
-                current_system_prompt = f"ТЕКУЩАЯ КОМПАНИЯ: {company_display_name}\nКОНТЕКСТ ДИАЛОГА:\n{history_context}\n\nИНСТРУКЦИИ:\n{self.audio_llm.model_config.tool_prompt_template}"
+                current_system_prompt = f"ТЕКУЩАЯ КОМПАНИЯ: {company_display_name}\nКОНТЕКСТ ДИАЛОГА:\n{history_context}\n\nИНСТРУКЦИИ:\n{tool_template}"
             else:
-                current_system_prompt = (history_context or "") + self.audio_llm.model_config.system_prompt_template.format(context="Контекст не предоставлен.")
+                current_system_prompt = (history_context or "") + sys_template.format(context="Контекст не предоставлен.")
 
         if use_rag:
             all_search_context = []
@@ -384,7 +387,8 @@ class AssistantService:
                 # Используем заглушку, чтобы ИИ знал о наличии ссылки, но не видел URL
                 clean_chunks = [re.sub(r'https?://\S+', '[ссылка прикреплена в чате]', chunk) for chunk in search_result.chunks]
                 
-                return self._truncate_context_by_chunks(SearchService.clean_scores(clean_chunks), self.audio_llm.model_config.max_voice_context_chars)
+                max_chars = self.audio_llm.model_config.max_voice_context_chars if self.audio_llm.model_config else 50000
+                return self._truncate_context_by_chunks(SearchService.clean_scores(clean_chunks), max_chars)
 
             # Коллбэк для поиска контактов через голосовой режим
             async def contact_callback(query: str) -> str:
@@ -399,14 +403,15 @@ class AssistantService:
             )
             if transcript:
                 extracted_links.update(self._extract_links(transcript))
-                # Если в ответе упоминается ссылка, ищем её во ВСЕМ накопленном контексте этого хода
+                # Если в ответе упоминается ссылка, ищем её во ВСЕМ накопленном контексте этого хода,
+                # фильтруя по релевантности к транскрипту ответа.
                 if any(w in transcript.lower() for w in ["ссылк", "маршрут", "карт", "локаци"]):
                     logger.info(f"DEBUG: All search context chunks seen in this turn ({len(all_search_context)}):")
                     for idx, chunk in enumerate(all_search_context):
                         logger.info(f"  Chunk {idx}: {chunk[:100]}...")
                     
-                    for chunk in all_search_context:
-                        extracted_links.update(self._extract_links(chunk))
+                    relevant_context_links = self._get_relevant_links_for_transcript(transcript, all_search_context)
+                    extracted_links.update(relevant_context_links)
             
             if self.chat_history and session_id:
                 metadata = {"rag_used": True, "platform": platform, "voice": True}
@@ -422,7 +427,7 @@ class AssistantService:
                     assistant_text=transcript or "[Голос]",
                 )
             
-            return audio_response, self._sanitize_response(transcript), list(extracted_links)
+            return audio_response, self._sanitize_response(transcript or ""), list(extracted_links)
         else:
             audio_response, transcript = await self.audio_llm.process_voice_from_pcm(pcm_data, current_system_prompt, format=audio_format)
             if self.chat_history and session_id:
@@ -435,7 +440,7 @@ class AssistantService:
                     user_text="[Голос]",
                     assistant_text=transcript,
                 )
-            return audio_response, self._sanitize_response(transcript), list(extracted_links)
+            return audio_response, self._sanitize_response(transcript or ""), list(extracted_links)
 
     def _truncate_context_by_chunks(self, chunks: List[str], max_chars: int) -> List[str]:
         result = []
@@ -581,6 +586,88 @@ class AssistantService:
         URL_PATTERN = r"(https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s]*)"
         found = re.findall(URL_PATTERN, text)
         return [l.rstrip(".,!?;:)\u2026\u00bb\u00ab\"'") for l in found if len(l) >= 11]
+
+    def _get_relevant_links_for_transcript(self, transcript: str, search_chunks: List[str]) -> List[str]:
+        if not transcript or not search_chunks:
+            return []
+            
+        def get_clean_words(text: str) -> set[str]:
+            text_lower = text.lower().replace("ё", "e")
+            # Заменяем все не-буквенно-цифровые символы на пробелы
+            cleaned = re.sub(r'[^a-zа-я0-9\s]', ' ', text_lower)
+            words = cleaned.split()
+            
+            # Общие стоп-слова
+            stopwords = {
+                "и", "в", "во", "не", "что", "он", "на", "я", "с", "со", "как", "а", "то", "все", "она", 
+                "так", "его", "но", "да", "ты", "к", "у", "же", "вы", "за", "бы", "по", "только", "ее", 
+                "мне", "было", "вот", "от", "меня", "еще", "нет", "о", "из", "ему", "им", "быть", "был",
+                "это", "этого", "этой", "этом"
+            }
+            # Доменные стоп-слова (расширено общими корпоративными терминами)
+            domain_stopwords = {
+                "цех", "отдел", "компания", "предприятие", "телефон", "номер", "адрес", "кабинет", 
+                "сотрудник", "сотрудников", "работник", "работников", "работа", "день", "время", "час", "часы", "город", "объект", "здание", 
+                "корпус", "этаж", "карта", "карты", "яндекс", "ссылка", "ссылки", "проехать", 
+                "маршрут", "локация", "локации", "информация", "база", "базы", "отдых", "отдыха",
+                "тэмпо", "гк", "ооо", "ао", "находится", "находиться", "территория", "холдинг"
+            }
+            all_stopwords = stopwords.union(domain_stopwords)
+            return {w for w in words if len(w) >= 3 and w not in all_stopwords}
+            
+        transcript_words = get_clean_words(transcript)
+        if not transcript_words:
+            # Если в транскрипте нет значимых слов (редкий случай), возвращаем все найденные ссылки
+            all_links = []
+            for chunk in search_chunks:
+                all_links.extend(self._extract_links(chunk))
+            return list(set(all_links))
+            
+        # Считаем частотность слов в чанках (Document Frequency)
+        doc_freq = {}
+        chunk_word_sets = []
+        for chunk in search_chunks:
+            cw = get_clean_words(chunk)
+            chunk_word_sets.append((chunk, cw))
+            for w in cw:
+                doc_freq[w] = doc_freq.get(w, 0) + 1
+            
+        chunk_scores = []
+        for chunk, chunk_words in chunk_word_sets:
+            links = self._extract_links(chunk)
+            if not links:
+                continue
+            
+            # Взвешиваем совпадения (подобие TF-IDF)
+            # Чем в большем количестве чанков встречается слово, тем меньший у него вес
+            score = 0.0
+            for w in chunk_words.intersection(transcript_words):
+                score += 1.0 / doc_freq[w]
+                
+            chunk_scores.append((score, chunk, links))
+            
+        if not chunk_scores:
+            return []
+            
+        # Находим максимальный балл
+        max_score = max(score for score, _, _ in chunk_scores)
+        
+        # Если максимальный балл равен 0, то ни один чанк не имеет явного сходства.
+        if max_score == 0.0:
+            all_links = []
+            for _, _, links in chunk_scores:
+                all_links.extend(links)
+            return list(set(all_links))
+            
+        # Иначе берем ссылки из чанков с баллом >= max_score * 0.5
+        threshold = max_score * 0.5
+        relevant_links = []
+        for score, _, links in chunk_scores:
+            if score >= threshold:
+                relevant_links.extend(links)
+                
+        return list(set(relevant_links))
+
 
     def _format_markdown_tables(self, text: str) -> str:
         """

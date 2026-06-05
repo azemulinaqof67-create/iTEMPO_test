@@ -6,6 +6,8 @@ class DummyAssistant:
     _sanitize_response = AssistantService._sanitize_response
     _format_markdown_tables = AssistantService._format_markdown_tables
     _format_html_tables = AssistantService._format_html_tables
+    _extract_links = AssistantService._extract_links
+    _get_relevant_links_for_transcript = AssistantService._get_relevant_links_for_transcript
 
 @pytest.fixture
 def assistant():
@@ -108,4 +110,33 @@ def test_sanitize_response_markdown_tables(assistant):
         "• <b>Контакт:</b> Андреев — <b>Телефон:</b> 1888"
     )
     assert assistant._sanitize_response(md_table) == expected_md
+
+
+def test_get_relevant_links_for_transcript(assistant):
+    # Тест фильтрации ссылок по релевантности к транскрипту
+    search_chunks = [
+        "База отдыха Березка находится в живописном месте. Карта: https://yandex.com/maps/org/beryozka/234",
+        "Технотрон Кузнечный цех. Карта: https://yandex.ru/maps/236/technotron-forge",
+        "АО НТЗ Цех 3. Карта: https://yandex.com/maps/236/ntz-shop3"
+    ]
+    
+    # Сценарий 1: Говорим про березку
+    transcript_berezka = "Я могу рассказать про базу отдыха Березка. Ссылку на карту прикрепила в чате."
+    relevant_links_berezka = assistant._get_relevant_links_for_transcript(transcript_berezka, search_chunks)
+    assert relevant_links_berezka == ["https://yandex.com/maps/org/beryozka/234"]
+    
+    # Сценарий 2: Говорим про технотрон
+    transcript_technotron = "Схема кузнечного цеха Технотрон доступна по ссылке."
+    relevant_links_technotron = assistant._get_relevant_links_for_transcript(transcript_technotron, search_chunks)
+    assert relevant_links_technotron == ["https://yandex.ru/maps/236/technotron-forge"]
+    
+    # Сценарий 3: Нет совпадений (все по 0) - fallback возвращает все
+    transcript_none = "Не удалось найти нужный цех."
+    relevant_links_none = assistant._get_relevant_links_for_transcript(transcript_none, search_chunks)
+    assert set(relevant_links_none) == {
+        "https://yandex.com/maps/org/beryozka/234",
+        "https://yandex.ru/maps/236/technotron-forge",
+        "https://yandex.com/maps/236/ntz-shop3"
+    }
+
 
