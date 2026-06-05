@@ -752,7 +752,7 @@ async def _handle_message_created(
         if assistant.chat_history:
             # Обновляем время последней активности
             try:
-                await assistant.chat_history.update_last_activity(session_id, "max")
+                await assistant.chat_history.update_last_activity(session_id, "max", username=user_name)
             except Exception as e:
                 logger.error(f"Error updating MAX user activity: {e}")
 

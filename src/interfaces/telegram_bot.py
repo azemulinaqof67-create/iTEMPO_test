@@ -678,9 +678,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Запрашиваем компанию перед продолжением общения
     if assistant.chat_history:
-        # Обновляем время последней активности
+        # Обновляем время последней активности и никнейм
         try:
-            await assistant.chat_history.update_last_activity(session_id, "telegram")
+            nickname = user.first_name
+            if user.username:
+                nickname = f"{user.first_name} (@{user.username})"
+            elif user.last_name:
+                nickname = f"{user.first_name} {user.last_name}"
+            await assistant.chat_history.update_last_activity(session_id, "telegram", nickname)
         except Exception:
             pass
 
@@ -864,6 +869,17 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     if assistant.chat_history:
+        # Обновляем время последней активности и никнейм
+        try:
+            nickname = user.first_name
+            if user.username:
+                nickname = f"{user.first_name} (@{user.username})"
+            elif user.last_name:
+                nickname = f"{user.first_name} {user.last_name}"
+            await assistant.chat_history.update_last_activity(session_id, "telegram", nickname)
+        except Exception:
+            pass
+
         user_company = await assistant.chat_history.get_user_company(session_id)
         if not user_company:
             await update.message.reply_text(

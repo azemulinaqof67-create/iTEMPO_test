@@ -505,12 +505,14 @@ class AssistantService:
                     in_quote = True
                 else:
                     if in_quote:
-                        new_lines.append(f"<blockquote>{'\n'.join(quote_lines)}</blockquote>")
+                        joined_quotes = '\n'.join(quote_lines)
+                        new_lines.append(f"<blockquote>{joined_quotes}</blockquote>")
                         quote_lines = []
                         in_quote = False
                     new_lines.append(line)
             if in_quote:
-                new_lines.append(f"<blockquote>{'\n'.join(quote_lines)}</blockquote>")
+                joined_quotes = '\n'.join(quote_lines)
+                new_lines.append(f"<blockquote>{joined_quotes}</blockquote>")
             return '\n'.join(new_lines)
             
         text = process_blockquotes(text)

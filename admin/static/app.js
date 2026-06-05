@@ -633,10 +633,13 @@ function renderLogsTable(logs) {
       ? '<span class="tag tag-tg">TG</span>'
       : `<span class="tag tag-max">${log.platform}</span>`;
     const msg = escapeHtml(log.message || '').substring(0, 100) + (log.message && log.message.length > 100 ? '...' : '');
+    const userDisplay = log.username
+      ? `<div style="font-weight: 500; font-size: 13px; color: var(--text-primary); margin-bottom: 2px;">${escapeHtml(log.username)}</div><code style="font-size: 10px; color: var(--text-secondary); opacity: 0.85;">${log.session_id}</code>`
+      : `<code style="font-size: 11px">${log.session_id}</code>`;
     return `
       <tr>
         <td style="font-size:11px;white-space:nowrap">${time}</td>
-        <td><code style="font-size:11px">${log.session_id}</code></td>
+        <td>${userDisplay}</td>
         <td>${platformTag}</td>
         <td>${roleTag}</td>
         <td><span class="msg-preview" title="${escapeHtml(log.message||'')}">${msg}</span></td>
@@ -1438,12 +1441,13 @@ function showLogDetailModal(index) {
     `;
   }
 
+  const userText = log.username ? `${log.username} (${log.session_id})` : log.session_id;
   const bodyHtml = `
     <div class="detail-view">
       <div style="display: flex; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 12px;">
         <div><span class="detail-label">Время:</span> ${time}</div>
         <div><span class="detail-label">Платформа:</span> ${platformTag}</div>
-        <div><span class="detail-label">Пользователь:</span> <code style="font-size:12px;">${log.session_id}</code></div>
+        <div><span class="detail-label">Пользователь:</span> <code style="font-size:12px;">${userText}</code></div>
       </div>
       <div class="detail-row">
         <span class="detail-label">Текст сообщения (${log.role === 'user' ? 'Пользователь' : 'Ассистент'})</span>

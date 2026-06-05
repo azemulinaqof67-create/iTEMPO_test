@@ -353,6 +353,7 @@ class ChatHistoryManager:
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity DOUBLE PRECISION;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS platform TEXT;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_seen DOUBLE PRECISION;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
             """)
             
             # 2. Таблица admin_users
@@ -483,20 +484,21 @@ class ChatHistoryManager:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM admin_users WHERE id = $1", user_id)
 
-    async def update_last_activity(self, user_id: str, platform: str):
+    async def update_last_activity(self, user_id: str, platform: str, username: Optional[str] = None):
         """Обновить время последней активности пользователя."""
         pool = await self.get_pool()
         now = time.time()
         async with pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO users (user_id, last_activity, platform, first_seen)
-                VALUES ($1, $2, $3, $2)
+                INSERT INTO users (user_id, last_activity, platform, first_seen, username)
+                VALUES ($1, $2, $3, $2, $4)
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     last_activity = EXCLUDED.last_activity,
                     platform = COALESCE(EXCLUDED.platform, users.platform),
-                    first_seen = COALESCE(users.first_seen, EXCLUDED.first_seen)
-            """, str(user_id), now, platform)
+                    first_seen = COALESCE(users.first_seen, EXCLUDED.first_seen),
+                    username = COALESCE(EXCLUDED.username, users.username)
+            """, str(user_id), now, platform, username)
 
     async def get_all_users(self, limit: int = 500, offset: int = 0, company_ids: Optional[List[str]] = None) -> List[Dict]:
         """Список всех пользователей для панели администратора."""
@@ -513,7 +515,8 @@ class ChatHistoryManager:
                         COALESCE(is_blocked, FALSE) as is_blocked,
                         last_activity,
                         platform,
-                        first_seen
+                        first_seen,
+                        username
                     FROM users
                     WHERE company_id = ANY($3::text[])
                     ORDER BY COALESCE(last_activity, 0) DESC
@@ -528,7 +531,8 @@ class ChatHistoryManager:
                         COALESCE(is_blocked, FALSE) as is_blocked,
                         last_activity,
                         platform,
-                        first_seen
+                        first_seen,
+                        username
                     FROM users
                     ORDER BY COALESCE(last_activity, 0) DESC
                     LIMIT $1 OFFSET $2
@@ -543,6 +547,7 @@ class ChatHistoryManager:
                 "last_activity": row["last_activity"],
                 "platform": row["platform"],
                 "first_seen": row["first_seen"],
+                "username": row["username"],
             })
         return result
 
@@ -709,27 +714,27 @@ class ChatHistoryManager:
         idx = 1
 
         if user_id:
-            conditions.append(f"session_id = ${idx}")
+            conditions.append(f"m.session_id = ${idx}")
             params.append(user_id)
             idx += 1
         if platform:
-            conditions.append(f"platform = ${idx}")
+            conditions.append(f"m.platform = ${idx}")
             params.append(platform)
             idx += 1
         if search:
-            conditions.append(f"message ILIKE ${idx}")
+            conditions.append(f"m.message ILIKE ${idx}")
             params.append(f"%{search}%")
             idx += 1
         if date_from:
-            conditions.append(f"timestamp >= ${idx}")
+            conditions.append(f"m.timestamp >= ${idx}")
             params.append(date_from)
             idx += 1
         if date_to:
-            conditions.append(f"timestamp <= ${idx}")
+            conditions.append(f"m.timestamp <= ${idx}")
             params.append(date_to)
             idx += 1
         if company_ids and 'all' not in company_ids:
-            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
+            conditions.append(f"m.session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
             params.append(company_ids)
             idx += 1
 
@@ -738,10 +743,11 @@ class ChatHistoryManager:
 
         async with pool.acquire() as conn:
             rows = await conn.fetch(f"""
-                SELECT session_id, platform, role, message, timestamp, metadata
-                FROM chat_messages
+                SELECT m.session_id, m.platform, m.role, m.message, m.timestamp, m.metadata, u.username
+                FROM chat_messages m
+                LEFT JOIN users u ON m.session_id = u.user_id
                 {where}
-                ORDER BY timestamp DESC
+                ORDER BY m.timestamp DESC
                 LIMIT ${idx} OFFSET ${idx + 1}
             """, *params)
 
@@ -755,6 +761,7 @@ class ChatHistoryManager:
                 "message": row["message"],
                 "timestamp": row["timestamp"],
                 "metadata": meta,
+                "username": row["username"],
             })
         return result
 
@@ -772,26 +779,26 @@ class ChatHistoryManager:
         idx = 1
 
         if user_id:
-            conditions.append(f"session_id = ${idx}")
+            conditions.append(f"m.session_id = ${idx}")
             params.append(user_id)
             idx += 1
         if platform:
-            conditions.append(f"platform = ${idx}")
+            conditions.append(f"m.platform = ${idx}")
             params.append(platform)
             idx += 1
         if search:
-            conditions.append(f"message ILIKE ${idx}")
+            conditions.append(f"m.message ILIKE ${idx}")
             params.append(f"%{search}%")
             idx += 1
         if company_ids and 'all' not in company_ids:
-            conditions.append(f"session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
+            conditions.append(f"m.session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
             params.append(company_ids)
             idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         async with pool.acquire() as conn:
             return await conn.fetchval(
-                f"SELECT COUNT(*) FROM chat_messages {where}", *params
+                f"SELECT COUNT(*) FROM chat_messages m {where}", *params
             ) or 0
 
 
