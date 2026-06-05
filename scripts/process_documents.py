@@ -101,7 +101,7 @@ async def main():
                 print("=" * 60)
                 try:
                     from scripts.migrate_contacts_to_qdrant import migrate as migrate_contacts
-                    await migrate_contacts(config=config)
+                    await migrate_contacts(config=config, force=args.force)
                 except Exception as e:
                     print(f"❌ Ошибка при векторизации контактов: {e}")
             else:
@@ -217,7 +217,7 @@ async def main():
         print("=" * 60)
         try:
             from scripts.migrate_contacts_to_qdrant import migrate as migrate_contacts
-            await migrate_contacts(config=config)
+            await migrate_contacts(config=config, force=args.force)
         except Exception as e:
             print(f"❌ Ошибка при векторизации контактов: {e}")
     elif args.skip_contacts:

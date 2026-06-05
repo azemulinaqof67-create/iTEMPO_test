@@ -1,8 +1,12 @@
 import asyncio
 import sqlite3
 import logging
+import sys
 from pathlib import Path
 import uuid
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from qdrant_client import models
 from qdrant_client.models import Distance, PointStruct, VectorParams, SparseVectorParams, SparseIndexParams, TokenizerType
@@ -13,7 +17,7 @@ from src.core.clients import ClientManager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-async def migrate(config=None):
+async def migrate(config=None, force=False):
     # 1. Загрузка конфигурации проекта
     if config is None:
         logger.info("Загрузка конфигурации из .env...")
@@ -58,6 +62,10 @@ async def migrate(config=None):
 
     # 4. Проверяем существование коллекции и получаем уже импортированные ID
     existing_ids = set()
+    if force and qdrant_client.collection_exists(collection_name):
+        logger.info(f"Флаг --force активен. Удаление существующей коллекции {collection_name}...")
+        qdrant_client.delete_collection(collection_name)
+
     if qdrant_client.collection_exists(collection_name):
         logger.info(f"Коллекция {collection_name} уже существует. Получаем список существующих контактов...")
         offset = None
@@ -184,4 +192,9 @@ async def migrate(config=None):
         raise e
 
 if __name__ == "__main__":
-    asyncio.run(migrate())
+    import argparse
+    parser = argparse.ArgumentParser(description="Миграция контактов из SQLite в Qdrant.")
+    parser.add_argument("--force", "-f", action="store_true", help="Принудительная перевекторизация всех контактов (пересоздание коллекции)")
+    args = parser.parse_args()
+
+    asyncio.run(migrate(force=args.force))
