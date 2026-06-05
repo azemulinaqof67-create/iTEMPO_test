@@ -17,7 +17,7 @@ class AgentOrchestrator:
     def __init__(self, config: Config):
         self.config = config
         self.router = IntentRouter(config)
-        self.contact_tool = ContactSearchTool(db_path=str(config.data_path / "contacts.db"))
+        self.contact_tool = ContactSearchTool(config=config)
         self.rag_tool = FilteredRAGTool()
         self.weather_tool = WeatherSearchTool(config.default_city)
         self.llm_service = TextLLMService(config)
@@ -263,7 +263,7 @@ class AgentOrchestrator:
                 logger.info(f"Expanded search query for boss: {search_query}")
             
         kwargs = {
-            "search_query": search_query,
+            "semantic_query": search_query,
             "company_filter": company,
             "exact_phone": phone
         }
@@ -369,7 +369,7 @@ class AgentOrchestrator:
 {state['query']}
 
 ПРАВИЛА:
-RULE 1: Always prioritize checking the {{chat_history}} first. If the user's question can be answered strictly using the Chat History (e.g., their name, previous topics), answer it immediately WITHOUT saying 'information not found'.
+RULE 1: Always prioritize checking the {{chat_history}} first. If the user's question can be answered strictly using the Chat History (e.g., their name, previous topics), answer it immediately WITHOUT saying 'information not found'. Если пользователь спрашивает 'как меня зовут' и его имя уже названо в ИСТОРИИ ДИАЛОГА — отвечай из истории, НЕ вызывай search tools.
 RULE 2: Use retrieved database context ONLY for external facts.
 
 1. Твой ответ должен быть САМОДОСТАТОЧНЫМ. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать "подробнее в документе", "см. раздел", "информация в базе знаний", упоминать названия разделов или любые названия документов из заголовков.
@@ -419,7 +419,9 @@ RULE 2: Use retrieved database context ONLY for external facts.
         conversational_phrases = [
             "как меня зовут", "кто я", "мое имя", "моё имя", 
             "что я спрашивал", "о чем мы", "о чём мы", 
-            "ты меня помнишь", "помнишь меня", "скажи моё имя", "скажи мое имя"
+            "ты меня помнишь", "помнишь меня", "скажи моё имя", "скажи мое имя",
+            "как тебя зовут", "что ты умеешь", "спасибо", "привет", "здравствуй",
+            "как дела", "помоги мне", "что можешь", "ты кто"
         ]
         is_conversational = any(phrase in query_lower for phrase in conversational_phrases)
         has_corporate_keywords = any(word in query_lower for word in ["телефон", "номер", "контакт", "почта", "завод", "тэмпо", "кабинет", "схема", "документ", "инструкция"])

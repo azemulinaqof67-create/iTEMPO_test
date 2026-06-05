@@ -39,6 +39,7 @@ dependencies = [
     "aiohttp>=3.13.5",
     "langgraph>=1.1.9",
     "python-multipart>=0.0.30",
+    "aiosqlite>=0.22.1",
 ]
 
 [build-system]

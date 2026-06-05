@@ -57,21 +57,19 @@ class HybridSearchService:
             contact_names: list[str] = []
             
             try:
-                import asyncpg
-                db_url = self.config.database_url
-                if not db_url:
-                    raise ValueError("DATABASE_URL не настроена.")
+                import aiosqlite
+                db_path = self.config.data_path / "contacts.db"
+                if not db_path.exists():
+                    raise FileNotFoundError(f"Файл базы данных не найден: {db_path.absolute()}")
                 
-                conn = await asyncpg.connect(db_url)
-                try:
-                    rows = await conn.fetch("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''")
-                    contact_names = [row["full_name"] for row in rows]
-                finally:
-                    await conn.close()
-                logger.info("[+] Загружено %d ФИО из PostgreSQL (contacts)", len(contact_names))
+                async with aiosqlite.connect(str(db_path)) as db:
+                    async with db.execute("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''") as cursor:
+                        rows = await cursor.fetchall()
+                        contact_names = [row[0] for row in rows]
+                logger.info("[+] Загружено %d ФИО из SQLite (contacts)", len(contact_names))
             except Exception as e:
                 logger.warning(
-                    "[!] Не удалось загрузить имена сотрудников из PostgreSQL: %s. FuzzyNameMatcher будет пуст.",
+                    "[!] Не удалось загрузить имена сотрудников из SQLite: %s. FuzzyNameMatcher будет пуст.",
                     e,
                 )
             

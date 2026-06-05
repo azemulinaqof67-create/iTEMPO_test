@@ -1,3 +1,5 @@
+# DEPRECATED: контакты больше не хранятся в Postgres.
+# Используйте: uv run python -m scripts.migrate_contacts_to_qdrant
 import asyncio
 import sqlite3
 import logging
