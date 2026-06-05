@@ -989,7 +989,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if all_links:
                     # Ограничиваем количество ссылок до 3, чтобы не перегружать сообщение
-                    top_links = all_links[:3]
+                    top_links = list(all_links)[:3]
                     links_list = "\n".join(top_links)
                     await update.message.reply_text(
                         f"-> <b>Link / Route:</b>\n\n{links_list}",
