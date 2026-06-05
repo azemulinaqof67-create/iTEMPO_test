@@ -10,9 +10,9 @@ Auth: заголовок Authorization: <token>
 """
 
 import asyncio
+import json
 import logging
 import re
-import json
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -31,7 +31,6 @@ MAX_RETRY_DELAY = 5            # секунды между повторными 
 MAX_MAX_RETRIES = 5            # максимум повторов при сбоях сети
 
 from src.core.constants import COMPANIES
-
 
 # ── HTTP-клиент MAX API ────────────────────────────────────────────────────
 
@@ -117,7 +116,7 @@ class MaxBotClient:
         """Получить информацию о боте (проверка токена)."""
         return await self._get("/me")
 
-    async def set_webhook(self, url: str, update_types: List[str] = None, secret: str = None) -> bool:
+    async def set_webhook(self, url: str, update_types: Optional[List[str]] = None, secret: Optional[str] = None) -> bool:
         """
         Метод настраивает доставку событий бота через Webhook.
         При активной подписке Long Polling не работает.
@@ -128,7 +127,7 @@ class MaxBotClient:
         }
         if secret:
             payload["secret"] = secret
-        
+
         logger.info(f"MAX API: Setting webhook to {url}...")
         res = await self._post("/subscriptions", payload)
         return res is not None and res.get("success", False)
@@ -139,7 +138,7 @@ class MaxBotClient:
         if url:
             from urllib.parse import quote
             return await self._delete(f"/subscriptions?url={quote(url)}")
-        
+
         # Если URL не передан, получаем список всех подписок и удаляем каждую
         try:
             logger.info("MAX API: Fetching active subscriptions for cleanup...")
@@ -203,7 +202,7 @@ class MaxBotClient:
         }
 
         attachments = []
-        
+
         if keyboard:
             attachments.append({
                 "type": "inline_keyboard",
@@ -213,7 +212,7 @@ class MaxBotClient:
             })
 
         if attachment_token:
-            att_payload = {"token": attachment_token}
+            att_payload: Dict[str, Any] = {"token": attachment_token}
             if attachment_id:
                 try:
                     val = int(attachment_id)
@@ -221,11 +220,11 @@ class MaxBotClient:
                     att_payload["audio_id"] = val
                 except (ValueError, TypeError):
                     att_payload["id"] = attachment_id
-            
+
             # Критически важное поле для некоторых версий API, чтобы пометить аудио как голос
             if attachment_type == "audio":
                 att_payload["kind"] = "voice"
-                
+
             attachments.append({
                 "type": attachment_type,
                 "payload": att_payload
@@ -237,27 +236,27 @@ class MaxBotClient:
         logger.info(f"MAX API: отправка сообщения в {chat_id}. Payload: {json.dumps(payload, ensure_ascii=False)}")
         url = f"{self.base_url}/messages?chat_id={chat_id}"
         session = await self._get_session()
-        
+
         # Уменьшаем до 10 попыток (30 секунд), так как текст уже отправлен
         for attempt in range(10):
             try:
                 async with session.post(url, json=payload) as resp:
                     if resp.status in (200, 201):
                         return await resp.json()
-                    
+
                     text = await resp.text()
                     # Если CDN еще не обработал аудио (ошибка attachment.not.ready)
                     if resp.status == 400 and "attachment.not.ready" in text:
                         logger.info(f"MAX: Вложение еще не готово (попытка {attempt+1}/10)...")
                         await asyncio.sleep(3.0)
                         continue
-                        
+
                     logger.error(f"MAX API POST /messages?chat_id={chat_id} → {resp.status}: {text}")
                     return None
             except Exception as e:
                 logger.error(f"Сетевая ошибка при отправке сообщения MAX: {e}")
                 return None
-                
+
         logger.error("MAX: Превышен лимит попыток ожидания готовности вложения.")
         return None
 
@@ -332,19 +331,19 @@ class MaxBotClient:
         upload_type может быть 'audio', 'image', 'file'.
         """
         session = await self._get_session()
-        
+
         # Шаг 1: Получение URL для загрузки
         url = f"{self.base_url}/uploads?type={upload_type}"
         if kind:
             url += f"&kind={kind}"
-        
+
         try:
             async with session.post(url) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     logger.error(f"Ошибка получения URL загрузки: {resp.status} - {text}")
                     return None, None
-                
+
                 data = await resp.json()
                 upload_url = data.get("url")
                 if not upload_url:
@@ -354,23 +353,24 @@ class MaxBotClient:
             # Шаг 2: Фактическая загрузка файла в хранилище (Storage)
             # КРИТИЧНО: Используем requests для формирования эталонного multipart-запроса
             if upload_type == "image":
-                import requests
                 import asyncio
-                
+
+                import requests
+
                 ext = filename.lower().split('.')[-1]
                 if ext not in ['png', 'jpg', 'jpeg', 'gif']:
                     ext = 'png'
                 mime = f"image/{ext}"
-                
+
                 def sync_upload():
                     files = {'v1': (f"image.{ext}", file_bytes, mime)}
                     return requests.post(upload_url, files=files)
-                
+
                 # Запускаем в потоке, чтобы не блокировать event loop
                 resp_sync = await asyncio.to_thread(sync_upload)
                 data = resp_sync.json()
                 logger.info(f"ОТВЕТ MEDIA SERVER (Step 2 - Requests/v1): {resp_sync.status_code} - {data}")
-                
+
                 # Имитируем объект ответа для дальнейшей логики
                 class MockResp:
                     def __init__(self, status): self.status = status
@@ -382,7 +382,7 @@ class MaxBotClient:
                 async with session.post(upload_url, data=form) as resp:
                     data = await resp.json()
                     logger.info(f"ОТВЕТ MEDIA SERVER (Step 2 - Multipart): {resp.status} - {data}")
-            
+
             # Если сервер вернул 200, но в JSON ошибка
             if data.get("error_code") or data.get("error_data"):
                 logger.error(f"Медиа-сервер отклонил загрузку: {data}")
@@ -390,12 +390,12 @@ class MaxBotClient:
 
             if resp.status == 200:
                 from urllib.parse import unquote
-                
+
                 # Шаг 3: Извлекаем НАСТОЯЩИЙ токен из ответа медиа-сервера
                 token = data.get("token")
                 if token:
                     token = unquote(token)
-                
+
                 # Если ответ в формате {"photos": {"hash": {"token": "..."}}}
                 if not token and "photos" in data:
                     photos = data["photos"]
@@ -405,23 +405,23 @@ class MaxBotClient:
                             token = first_photo.get("token")
                             if token:
                                 token = unquote(token)
-                
+
                 # ID для изображений не требуется, но для файлов/аудио извлекаем
                 file_id = data.get("id") or data.get("file_id")
-                
+
                 if not token:
                     # В крайнем случае пробуем найти в URL (для обратной совместимости)
                     if "token=" in upload_url:
                         token = unquote(upload_url.split("token=")[1].split("&")[0])
                     elif "apiToken=" in upload_url:
                         token = unquote(upload_url.split("apiToken=")[1].split("&")[0])
-                
+
                 logger.info(f"Файл успешно загружен. Тип: {upload_type}, Токен получен: {bool(token)}")
                 return token, str(file_id) if file_id else None
-            
+
             logger.error(f"Ошибка при загрузке байтов в Storage: {resp.status} - {data}")
             return None, None
-                    
+
         except Exception as e:
             logger.error(f"Сетевая ошибка при загрузке файла в MAX API: {e}")
             return None, None
@@ -513,7 +513,7 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
     # Разделяем на теги и текст
     tokens = re.split(r'(<[^>]+>)', text)
     chunks = []
-    
+
     current_chunk = []
     current_len = 0
     open_tags = []  # стек открытых тегов: список кортежей (имя_тега, полный_открывающий_тег)
@@ -521,7 +521,7 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
     for token in tokens:
         if not token:
             continue
-            
+
         if token.startswith('<') and token.endswith('>'):
             # Это тег
             tag_content = token[1:-1].strip()
@@ -539,18 +539,18 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
                     tag_name = parts[0].lower()
                     if tag_name in ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'span', 'tg-spoiler', 'a', 'code', 'pre', 'blockquote']:
                         open_tags.append((tag_name, token))
-            
+
             # Проверяем, влезет ли этот тег
             if current_len + len(token) > max_len:
                 closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
                 current_chunk.append(closing_tags)
                 chunks.append("".join(current_chunk))
-                
+
                 current_chunk = []
                 opening_tags = "".join(full_tag for _, full_tag in open_tags)
                 current_chunk.append(opening_tags)
                 current_len = len(opening_tags)
-            
+
             current_chunk.append(token)
             current_len += len(token)
         else:
@@ -561,12 +561,12 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
                 # Учитываем закрывающие теги в конце чанка
                 closing_tags_len = sum(len(name) + 3 for name, _ in open_tags)  # len('</name>')
                 available = max_len - current_len - closing_tags_len
-                
+
                 if available <= 0:
                     closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
                     current_chunk.append(closing_tags)
                     chunks.append("".join(current_chunk))
-                    
+
                     current_chunk = []
                     opening_tags = "".join(full_tag for _, full_tag in open_tags)
                     current_chunk.append(opening_tags)
@@ -574,7 +574,7 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
                     available = max_len - current_len - closing_tags_len
                     if available <= 0:
                         available = 1
-                
+
                 if len(text_fragment) <= available:
                     current_chunk.append(text_fragment)
                     current_len += len(text_fragment)
@@ -586,16 +586,16 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
                         split_idx = sub_frag.rfind(' ')
                     if split_idx <= 0:
                         split_idx = available
-                    
+
                     part_to_add = text_fragment[:split_idx]
                     text_fragment = text_fragment[split_idx:]
-                    
+
                     current_chunk.append(part_to_add)
-                    
+
                     closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
                     current_chunk.append(closing_tags)
                     chunks.append("".join(current_chunk))
-                    
+
                     current_chunk = []
                     opening_tags = "".join(full_tag for _, full_tag in open_tags)
                     current_chunk.append(opening_tags)
@@ -606,7 +606,7 @@ def _split_long_message(text: str, max_len: int = MAX_MESSAGE_MAX_LEN) -> List[s
         clean_text = re.sub(r'<[^>]+>', '', chunk_str).strip()
         if clean_text:
             chunks.append(chunk_str)
-            
+
     return chunks
 
 
@@ -626,7 +626,7 @@ async def _handle_bot_started(
     Обработчик события bot_started (пользователь запустил бота или написал /start).
     Показывает клавиатуру выбора предприятия если оно ещё не выбрано.
     """
-    chat_id: int = event.get("chat", {}).get("chat_id") or event.get("chat_id")
+    chat_id: int = event.get("chat", {}).get("chat_id") or event.get("chat_id") or 0
     user: Dict = event.get("user", {})
     user_id: int = user.get("user_id", 0)
     user_name: str = user.get("name", "")
@@ -706,7 +706,7 @@ async def _handle_message_created(
     """
     message: Dict = event.get("message", {})
     body: Dict = message.get("body", {})
-    
+
     # Пытаемся достать текст из основного сообщения или из пересланного (link)
     text: str = (body.get("text") or "").strip()
     if not text:
@@ -722,7 +722,7 @@ async def _handle_message_created(
     attachments = body.get("attachments") or \
                   message.get("attachments") or \
                   message.get("link", {}).get("message", {}).get("attachments") or []
-    
+
     voice_url = None
     for att in attachments:
             voice_url = att.get("payload", {}).get("url")
@@ -731,7 +731,7 @@ async def _handle_message_created(
     chat_id: int = message.get("recipient", {}).get("chat_id", 0)
     session_id = _get_session_id(user_id)
     logger.info(f"🟢 [VER 2.7] MAX [message_created]: user_id={user_id}, chat_id={chat_id}")
-    
+
     status_mid = None
     status_task = None
 
@@ -803,6 +803,7 @@ async def _handle_message_created(
             return
 
         session_id = _get_session_id(user_id)
+        user_company = None
         if assistant.chat_history:
             user_company = await assistant.chat_history.get_user_company(session_id)
             if not user_company:
@@ -815,13 +816,13 @@ async def _handle_message_created(
 
         # 1. Начальная подготовка и статус
         await client.send_action(chat_id, "typing_on")
-            
+
         # 2. Обработка голоса (если есть)
         if voice_url:
             status_resp = await client.send_message(chat_id, "🎤 Скачиваю и распознаю аудио...")
             status_mid = extract_mid(status_resp)
             logger.info(f"🔍 MAX: Статус 'Скачиваю' отправлен, mid={status_mid}")
-            
+
             # Скачивание файла из CDN MAX
             async with aiohttp.ClientSession() as download_session:
                 async with download_session.get(voice_url) as resp:
@@ -833,7 +834,7 @@ async def _handle_message_created(
                         return
 
             # STT
-            transcript = await assistant.transcribe_audio(bytes(audio_bytes))
+            transcript = await assistant.transcribe_audio(audio_bytes)
             if not transcript:
                 if status_mid: await client.delete_message(chat_id, status_mid)
                 await client.send_message(chat_id, "❌ Не удалось распознать речь.")
@@ -863,7 +864,7 @@ async def _handle_message_created(
                     await client.edit_message(chat_id, mid, status_texts[counter % len(status_texts)])
                 except asyncio.CancelledError: break
                 except Exception: break
-        
+
         if status_mid:
             status_task = asyncio.create_task(update_status_periodically(status_mid))
 
@@ -897,20 +898,20 @@ async def _handle_message_created(
         image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
         # Находим картинки в тексте ПЕРЕД тем как их удалить
         images_from_text = re.findall(image_pattern, answer)
-        
+
         clean_answer = re.sub(image_pattern, '', answer).strip()
         parts = _split_long_message(clean_answer)
         for part in parts:
             if part:
                 await client.send_message(chat_id, part)
                 if len(parts) > 1: await asyncio.sleep(0.3)
-                
+
         # 8. Отправка дополнительных документов
         documents_to_send = result.get("documents_to_send", [])
-        
+
         # Собираем все пути к файлам, которые уже есть в списке на отправку, чтобы не дублировать
         already_sending_paths = {d.document_path for d in documents_to_send}
-        
+
         # Добавляем картинки из текста в список на отправку
         for alt_text, img_path in images_from_text:
             if img_path.startswith('data/') and img_path not in already_sending_paths:
@@ -933,34 +934,34 @@ async def _handle_message_created(
                     if os.path.exists(p):
                         full_path = p
                         break
-                
+
                 if full_path:
                     try:
                         with open(full_path, "rb") as f:
                             file_bytes = f.read()
-                        
+
                         file_type = doc_rule.file_type
                         if file_type == "auto":
                             ext = os.path.splitext(full_path)[1].lower()
                             if ext in ['.jpg', '.jpeg', '.png', '.gif']: file_type = "image"
                             else: file_type = "file"
-                        
+
                         upload_type = "image" if file_type == "image" else "file"
                         filename = os.path.basename(full_path)
-                        
+
                         token, file_id = await client.upload_file(
-                            file_bytes=file_bytes, 
+                            file_bytes=file_bytes,
                             filename=filename,
                             upload_type=upload_type,
                             kind=""
                         )
-                        
+
                         if token:
                             # Для изображений ID не передается, только токен
                             final_id = None if upload_type == "image" else file_id
                             await client.send_message(
-                                chat_id, 
-                                doc_rule.description, 
+                                chat_id,
+                                doc_rule.description,
                                 attachment_token=token,
                                 attachment_type=upload_type,
                                 attachment_id=final_id
@@ -974,7 +975,7 @@ async def _handle_message_created(
         # Если пришла ошибка блокировки сессии
         if "wait for the response" in str(e).lower() or "already processing" in str(e).lower():
             await client.send_message(
-                chat_id, 
+                chat_id,
                 "⏳ Подождите — ваш предыдущий запрос ещё обрабатывается. Я отвечу на него совсем скоро!"
             )
         else:
@@ -990,7 +991,7 @@ async def _handle_message_created(
                 await status_task
             except asyncio.CancelledError:
                 pass
-        
+
         # Удаляем статусное сообщение, если оно было создано
         if status_mid:
             logger.info(f"🧹 MAX: Попытка удаления статусного сообщения {status_mid}...")
@@ -1011,10 +1012,10 @@ async def _handle_message_callback(
 
     callback_obj = event.get("callback") or {}
     user_obj = callback_obj.get("user") or event.get("user") or {}
-    
+
     user_id: int = user_obj.get("user_id") or user_obj.get("id") or \
                   event.get("user_id") or event.get("sender_id") or 0
-    
+
     # Пытаемся достать chat_id из разных мест (зависит от типа чата и версии API)
     message_obj = event.get("message", {})
     chat_id: int = message_obj.get("recipient", {}).get("chat_id") or \
@@ -1180,7 +1181,7 @@ async def run_max_bot(config: Config, assistant: Optional[AssistantService] = No
 
     # В противном случае используем Long Polling
     logger.info("📡 MAX бот начал прослушивание событий (Long Polling)...")
-    
+
     # Принудительно отключаем webhook на серверах MAX, чтобы Long Polling заработал корректно
     await client.delete_webhook()
 
@@ -1204,7 +1205,7 @@ async def run_max_bot(config: Config, assistant: Optional[AssistantService] = No
 
                 updates: List[Dict] = data.get("updates", [])
                 new_marker: Optional[int] = data.get("marker")
-                
+
                 # Добавляем лог для отладки
                 if updates:
                     logger.info(f"✅ MAX: Получено {len(updates)} обновлений! (marker {marker} -> {new_marker})")
