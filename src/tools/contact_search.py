@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 class ContactSearchInput(BaseModel):
     """Схема входных аргументов для инструмента поиска контактов."""
     semantic_query: str = Field(
-        description="Имя, фамилия, должность, отдел или функция искомого лица (например, 'Иванов', 'Управляющий', 'Бухгалтерия')"
+        default="",
+        description="Имя, фамилия, должность или отдел искомого лица. ВНИМАНИЕ: Оставьте это поле пустым (\"\"), если пользователь просит вывести просто список или всех сотрудников компании/отдела, чтобы избежать искажения сортировки."
     )
     company_filter: Optional[str] = Field(
         default=None,
@@ -18,6 +19,10 @@ class ContactSearchInput(BaseModel):
     exact_phone: Optional[str] = Field(
         default=None,
         description="Точный или частичный номер телефона для поиска владельца контакта"
+    )
+    limit: int = Field(
+        default=10,
+        description="Максимальное количество возвращаемых контактов. Увеличьте это значение (вплоть до 50), если пользователь запрашивает список сотрудников или ищет 'других'."
     )
 
 class ContactSearchTool:
@@ -45,7 +50,8 @@ class ContactSearchTool:
             params_validated = ContactSearchInput(
                 semantic_query=semantic_query,
                 company_filter=company_filter,
-                exact_phone=exact_phone
+                exact_phone=exact_phone,
+                limit=kwargs.get("limit", 10)
             )
         except Exception as e:
             logger.error(f"Validation error in ContactSearchTool: {e}")
@@ -66,7 +72,7 @@ class ContactSearchTool:
                 semantic_query=params_validated.semantic_query,
                 company_filter=params_validated.company_filter,
                 exact_phone=params_validated.exact_phone,
-                limit=5
+                limit=params_validated.limit
             )
 
             if not rows:

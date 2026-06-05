@@ -34,6 +34,10 @@ class ContactHybridSearch:
         limit: int = 5,
     ) -> List[Dict[str, Any]]:
         """Выполняет гибридный поиск контактов в Qdrant."""
+        if semantic_query.strip() and company_filter:
+            if company_filter.lower() not in semantic_query.lower():
+                semantic_query = f"{semantic_query} {company_filter}".strip()
+
         client = self.client_manager.get_qdrant_client()
         loop = asyncio.get_running_loop()
 
@@ -41,61 +45,84 @@ class ContactHybridSearch:
             logger.warning(f"Коллекция {self.collection_name} не существует. Поиск невозможен.")
             return []
 
-        # 1. Построение фильтра Qdrant
-        must_conditions = []
+        # 1. Построение фильтров Qdrant
+        strict_must = []
+        global_must = []
 
-        # Фильтр по компании больше не применяется для поиска контактных данных,
-        # чтобы поиск всегда выполнялся глобально по всем компаниям.
-        # if company_filter:
-        #     must_conditions.append(
-        #         models.FieldCondition(
-        #             key="company",
-        #             match=models.MatchText(text=company_filter)
-        #         )
-        #     )
+        if company_filter:
+            # Разделяем фильтр по компании на слова, чтобы MatchText гарантированно находил их при скролле
+            for word in company_filter.split():
+                strict_must.append(
+                    models.FieldCondition(
+                        key="company",
+                        match=models.MatchText(text=word)
+                    )
+                )
 
         if exact_phone:
             phone_digits = "".join(c for c in exact_phone if c.isdigit())
             if phone_digits:
-                # Ищем по подстроке/токену (Text index) ИЛИ по точному совпадению (Keyword index)
-                must_conditions.append(
-                    models.Filter(
-                        should=[
-                            models.FieldCondition(
-                                key="phone",
-                                match=models.MatchText(text=phone_digits)
-                            ),
-                            models.FieldCondition(
-                                key="exact_phone",
-                                match=models.MatchValue(value=phone_digits)
-                            )
-                        ]
-                    )
+                phone_filter_cond = models.Filter(
+                    should=[
+                        models.FieldCondition(
+                            key="phone",
+                            match=models.MatchText(text=phone_digits)
+                        ),
+                        models.FieldCondition(
+                            key="exact_phone",
+                            match=models.MatchValue(value=phone_digits)
+                        )
+                    ]
                 )
+                strict_must.append(phone_filter_cond)
+                global_must.append(phone_filter_cond)
 
-        qdrant_filter = models.Filter(must=must_conditions) if must_conditions else None
+        qdrant_filter_strict = models.Filter(must=strict_must) if strict_must else None
+        qdrant_filter_global = models.Filter(must=global_must) if global_must else None
 
         # 2. Если семантический запрос пустой, ищем только по фильтрам (например, по номеру телефона)
         if not semantic_query.strip():
-            if not qdrant_filter:
+            if not qdrant_filter_strict:
                 return []
             
-            logger.info(f"[QDRANT CONTACTS SEARCH] Фильтрационный поиск по: company_filter={company_filter}, exact_phone={exact_phone}")
+            logger.info(f"[QDRANT CONTACTS SEARCH] Фильтрационный поиск (Pass 1 - strict) по: company_filter={company_filter}, exact_phone={exact_phone}")
             try:
                 scroll_result = await loop.run_in_executor(
                     None,
                     lambda: client.scroll(
                         collection_name=self.collection_name,
-                        scroll_filter=qdrant_filter,
+                        scroll_filter=qdrant_filter_strict,
                         limit=limit,
                         with_payload=True,
                     )
                 )
                 points = scroll_result[0]
             except Exception as e:
-                logger.error(f"Ошибка при фильтрационном поиске в Qdrant: {e}")
-                return []
+                logger.error(f"Ошибка при строго-фильтрационном поиске в Qdrant: {e}")
+                points = []
 
+            # Если строго-фильтрационный поиск пуст и есть различие с глобальным фильтром
+            # (то есть company_filter был задан, и мы можем попробовать без него)
+            if not points and company_filter:
+                if qdrant_filter_global:
+                    logger.info(f"[QDRANT CONTACTS SEARCH] Фильтрационный поиск (Pass 2 - global fallback) по: exact_phone={exact_phone}")
+                    try:
+                        scroll_result = await loop.run_in_executor(
+                            None,
+                            lambda: client.scroll(
+                                collection_name=self.collection_name,
+                                scroll_filter=qdrant_filter_global,
+                                limit=limit,
+                                with_payload=True,
+                            )
+                        )
+                        points = scroll_result[0]
+                    except Exception as e:
+                        logger.error(f"Ошибка при глобально-фильтрационном поиске в Qdrant: {e}")
+                        points = []
+                else:
+                    logger.info("[QDRANT CONTACTS SEARCH] Глобальный фильтр пуст, скролл без фильтров отменен.")
+                    points = []
             results = []
             for point in points:
                 payload = point.payload or {}
@@ -178,38 +205,48 @@ class ContactHybridSearch:
         
         sparse_vector = await loop.run_in_executor(None, get_sparse)
 
-        # 3.3. Запрос к Qdrant
-        try:
-            prefetch = [
-                models.Prefetch(
-                    query=query_list,
-                    using="",
-                    limit=limit * 3, # берем с запасом для слияния
-                ),
-                models.Prefetch(
-                    query=sparse_vector,
-                    using="sparse",
-                    limit=limit * 3,
+        # 3.3. Запрос к Qdrant (Pass 1 - strict)
+        async def run_hybrid_search(q_filter: Optional[models.Filter]) -> List[Any]:
+            try:
+                prefetch = [
+                    models.Prefetch(
+                        query=query_list,
+                        using="",
+                        limit=limit * 3, # берем с запасом для слияния
+                    ),
+                    models.Prefetch(
+                        query=sparse_vector,
+                        using="sparse",
+                        limit=limit * 3,
+                    )
+                ]
+                
+                search_result = await loop.run_in_executor(
+                    None,
+                    lambda: client.query_points(
+                        collection_name=self.collection_name,
+                        prefetch=prefetch,
+                        query=models.FusionQuery(fusion=models.Fusion.RRF),
+                        query_filter=q_filter,
+                        limit=limit,
+                        with_payload=True,
+                    ),
                 )
-            ]
-            
-            search_result = await loop.run_in_executor(
-                None,
-                lambda: client.query_points(
-                    collection_name=self.collection_name,
-                    prefetch=prefetch,
-                    query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    query_filter=qdrant_filter,
-                    limit=limit,
-                    with_payload=True,
-                ),
-            )
-        except Exception as e:
-            logger.error(f"Ошибка при гибридном поиске в Qdrant: {e}")
-            return []
+                return search_result.points
+            except Exception as e:
+                logger.error(f"Ошибка при гибридном поиске в Qdrant с фильтром {q_filter}: {e}")
+                return []
+
+        logger.info(f"[QDRANT CONTACTS SEARCH] Pass 1 (Strict): query='{semantic_query}' | filter={qdrant_filter_strict}")
+        points = await run_hybrid_search(qdrant_filter_strict)
+
+        # Pass 2 (Global Fallback), если Pass 1 ничего не вернул и был задан company_filter
+        if not points and company_filter:
+            logger.info(f"[QDRANT CONTACTS SEARCH] Pass 1 вернул 0 результатов. Pass 2 (Global Fallback): query='{semantic_query}' | filter={qdrant_filter_global}")
+            points = await run_hybrid_search(qdrant_filter_global)
 
         results = []
-        for point in search_result.points:
+        for point in points:
             payload = point.payload or {}
             results.append({
                 "id": point.id,
