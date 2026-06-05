@@ -264,7 +264,7 @@ async def toggle_voice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-    assistant: AssistantService = context.bot_data.get("assistant")
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
 
     if not assistant or not assistant.chat_history:
         await update.message.reply_text("⚠️ База данных недоступна.")
@@ -288,16 +288,22 @@ async def toggle_voice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на инлайн кнопки меню и выбора предприятия"""
     query = update.callback_query
+    if query is None or update.effective_user is None or not context.bot_data:
+        return
     await query.answer()
     
-    if not query.data:
+    query_data = query.data
+    if not query_data:
         return
         
     user_id = str(update.effective_user.id)
-    assistant: AssistantService = context.bot_data["assistant"]
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
+    if not assistant or not assistant.chat_history:
+        await query.edit_message_text("❌ Ошибка: модуль истории не подключен.")
+        return
     
     # ─── 1. Возврат в главное меню ──────────────────────────────────────────
-    if query.data == "menu_main":
+    if query_data == "menu_main":
         voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
         company_id = await assistant.chat_history.get_user_company(user_id)
         company_name = COMPANIES.get(company_id, company_id) if company_id else None
@@ -309,7 +315,7 @@ async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     # ─── 2. Переход к выбору компании ──────────────────────────────────────
-    elif query.data == "menu_company":
+    elif query_data == "menu_company":
         await query.edit_message_text(
             "🏭 <b>Выберите ваше предприятие:</b>",
             reply_markup=_get_company_menu_keyboard(),
@@ -317,7 +323,7 @@ async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     # ─── 3. Переключение голосового режима ──────────────────────────────────
-    elif query.data == "menu_voice":
+    elif query_data == "menu_voice":
         current = await assistant.chat_history.get_voice_mode(user_id)
         new_mode = not current
         await assistant.chat_history.set_voice_mode(user_id, new_mode)
@@ -332,32 +338,29 @@ async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     # ─── 4. Очистка истории ──────────────────────────────────────────────────
-    elif query.data == "menu_clear":
+    elif query_data == "menu_clear":
         await clear_history(update, context)
         
     # ─── 5. Установка выбранной компании ─────────────────────────────────────
-    elif query.data.startswith("company_"):
-        company_id = query.data.split("company_")[1]
+    elif query_data.startswith("company_"):
+        company_id = query_data.split("company_")[1]
         company_name = COMPANIES.get(company_id, company_id)
         
         try:
-            if assistant.chat_history:
-                await assistant.chat_history.set_user_company(user_id, company_id)
-                # После выбора компании возвращаемся в главное меню с подтверждением
-                voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
-                
-                success_text = (
-                    f"✅ Предприятие <b>{company_name}</b> успешно установлено!\n\n"
-                    f"{_get_menu_text(voice_enabled, company_name)}"
-                )
-                
-                await query.edit_message_text(
-                    success_text,
-                    reply_markup=_get_main_menu_keyboard(voice_enabled),
-                    parse_mode="HTML"
-                )
-            else:
-                await query.edit_message_text("❌ Ошибка: модуль истории не подключен.")
+            await assistant.chat_history.set_user_company(user_id, company_id)
+            # После выбора компании возвращаемся в главное меню с подтверждением
+            voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
+            
+            success_text = (
+                f"✅ Предприятие <b>{company_name}</b> успешно установлено!\n\n"
+                f"{_get_menu_text(voice_enabled, company_name)}"
+            )
+            
+            await query.edit_message_text(
+                success_text,
+                reply_markup=_get_main_menu_keyboard(voice_enabled),
+                parse_mode="HTML"
+            )
         except Exception as e:
             logger.error(f"Error setting company: {e}")
             await query.edit_message_text("❌ Произошла ошибка при сохранении настроек.")
@@ -365,24 +368,27 @@ async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /clear - очистка истории разговора"""
+    if not update.effective_user or not update.effective_message or not context.bot_data:
+        return
     user_id = str(update.effective_user.id)
-    assistant: AssistantService = context.bot_data["assistant"]
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
+    if not assistant:
+        return
     
     if assistant.chat_history:
         try:
             await assistant.chat_history.clear_history(user_id, clear_summary=True)
             await assistant.orchestrator.clear_memory(user_id)
             
-            text = "✅ <b>История разговора очищена.</b>"
-            
-            if update.callback_query:
+            query = update.callback_query
+            if query:
                 # Получаем текущие настройки для отображения в меню
                 voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
                 company_id = await assistant.chat_history.get_user_company(user_id)
                 company_name = COMPANIES.get(company_id, company_id) if company_id else None
                 
                 success_text = f"✅ <b>История разговора очищена!</b>\n\n{_get_menu_text(voice_enabled, company_name)}"
-                await update.callback_query.edit_message_text(
+                await query.edit_message_text(
                     success_text, 
                     reply_markup=_get_main_menu_keyboard(voice_enabled),
                     parse_mode="HTML"
@@ -392,14 +398,16 @@ async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error clearing history: {e}")
             err_text = "❌ Ошибка при очистке истории."
-            if update.callback_query:
-                await update.callback_query.edit_message_text(err_text)
+            query = update.callback_query
+            if query:
+                await query.edit_message_text(err_text)
             else:
                 await update.effective_message.reply_text(err_text)
     else:
         err_text = "ℹ️ История разговоров отключена в настройках."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(err_text)
+        query = update.callback_query
+        if query:
+            await query.edit_message_text(err_text)
         else:
             await update.effective_message.reply_text(err_text)
 
@@ -464,6 +472,8 @@ async def send_document(update: Update, document_rule):
         update: Telegram Update объект
         document_rule: DocumentRule объект с информацией о документе
     """
+    if not update.effective_message:
+        return
     import os
     
     # Определяем базовый путь
@@ -483,7 +493,7 @@ async def send_document(update: Update, document_rule):
     
     if not file_found:
         logger.warning(f"Document not found: {document_path}")
-        await update.message.reply_text(f"❌ Документ не найден: {document_rule.description}")
+        await update.effective_message.reply_text(f"❌ Документ не найден: {document_rule.description}")
         return
     
     try:
@@ -504,13 +514,13 @@ async def send_document(update: Update, document_rule):
             filename = os.path.basename(full_path)
             
             if file_type == "image":
-                await update.message.reply_photo(
+                await update.effective_message.reply_photo(
                     photo=document_file,
                     caption=document_rule.description
                 )
             else:
                 # Для PDF, DOCX и других файлов
-                await update.message.reply_document(
+                await update.effective_message.reply_document(
                     document=document_file,
                     filename=filename,
                     caption=document_rule.description
@@ -518,7 +528,7 @@ async def send_document(update: Update, document_rule):
                 
     except Exception as e:
         logger.error(f"Error sending document {document_path}: {e}")
-        await update.message.reply_text(f"❌ Не удалось отправить документ: {document_rule.description}")
+        await update.effective_message.reply_text(f"❌ Не удалось отправить документ: {document_rule.description}")
 
 
 def split_html_message(text: str, max_len: int = 4000) -> list[str]:
@@ -675,6 +685,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     assistant: AssistantService = context.bot_data["assistant"]
     session_id = str(user.id)
+    user_company = None
 
     # Запрашиваем компанию перед продолжением общения
     if assistant.chat_history:
