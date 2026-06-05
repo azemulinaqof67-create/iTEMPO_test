@@ -44,13 +44,15 @@ class ContactHybridSearch:
         # 1. Построение фильтра Qdrant
         must_conditions = []
 
-        if company_filter:
-            must_conditions.append(
-                models.FieldCondition(
-                    key="company",
-                    match=models.MatchText(text=company_filter)
-                )
-            )
+        # Фильтр по компании больше не применяется для поиска контактных данных,
+        # чтобы поиск всегда выполнялся глобально по всем компаниям.
+        # if company_filter:
+        #     must_conditions.append(
+        #         models.FieldCondition(
+        #             key="company",
+        #             match=models.MatchText(text=company_filter)
+        #         )
+        #     )
 
         if exact_phone:
             phone_digits = "".join(c for c in exact_phone if c.isdigit())
