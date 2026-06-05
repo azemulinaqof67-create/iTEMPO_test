@@ -420,11 +420,20 @@ class Config:
         if self.gemini_api_key and self.gemini_api_key not in api_keys:
             api_keys.insert(0, self.gemini_api_key)
 
+        # Удаляем дубликаты с сохранением порядка
+        seen = set()
+        unique_keys = []
+        for k in api_keys:
+            if k not in seen:
+                seen.add(k)
+                unique_keys.append(k)
+        api_keys = unique_keys
+
         if api_keys:
             self.api_keys = api_keys
             if not self.gemini_api_key:
                 self.gemini_api_key = api_keys[0]
-            logger.info(f"🔄 Перезагружено {len(api_keys)} API ключей")
+            logger.info(f"🔄 Перезагружено {len(api_keys)} уникальных API ключей")
         self.text_model = os.getenv("GEMINI_TEXT_MODEL", self.text_model)
         self.audio_model = os.getenv("GEMINI_AUDIO_MODEL", self.audio_model)
         raw_embedding_models = os.getenv("GEMINI_EMBEDDING_MODEL", ",".join(self.embedding_models) if self.embedding_models else self.embedding_model)
@@ -470,12 +479,21 @@ class Config:
         if gemini_api_key and gemini_api_key not in api_keys:
             api_keys.insert(0, gemini_api_key)
 
+        # Удаляем дубликаты с сохранением порядка
+        seen = set()
+        unique_keys = []
+        for k in api_keys:
+            if k not in seen:
+                seen.add(k)
+                unique_keys.append(k)
+        api_keys = unique_keys
+
         if not api_keys:
             raise ConfigError("GEMINI_API_KEY или GEMINI_API_KEY_1 не задан в .env")
 
         if not gemini_api_key:
             gemini_api_key = api_keys[0]
-        logger.info(f"🔑 Загружено {len(api_keys)} API ключей")
+        logger.info(f"🔑 Загружено {len(api_keys)} уникальных API ключей")
 
         # Загрузка YAML конфигурации
         yaml_data = {}

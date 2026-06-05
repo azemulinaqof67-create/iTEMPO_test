@@ -13,7 +13,7 @@ import logging
 import socket
 import threading
 from threading import Lock
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
@@ -24,6 +24,9 @@ from qdrant_client import QdrantClient
 
 from src.core.config import Config
 from src.core.exceptions import ConfigError
+
+if TYPE_CHECKING:
+    from fastembed import SparseTextEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +171,7 @@ class ClientManager:
 
     def __init__(self, config: Config):
         self.config = config
-        self._embedder: Optional[Union["SentenceTransformer", "GeminiEmbedder"]] = None  # noqa: F821
+        self._embedder: Optional[GeminiEmbedder] = None
         self._gemini: Optional[object] = None  # По умолчанию (для совместимости)
         self._gemini_clients: Dict[str, object] = {} # Кеш клиентов по api_version
         self._gemini_live: Optional[object] = None  # genai.Client for Live API
@@ -254,7 +257,7 @@ class ClientManager:
         """
         return types.HttpOptions(
             api_version=api_version,
-            httpxClient=self.get_gemini_http_client(),
+            httpx_client=self.get_gemini_http_client(),
             retry_options=types.HttpRetryOptions(attempts=1),
         )
 

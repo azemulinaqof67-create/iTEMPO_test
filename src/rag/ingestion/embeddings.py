@@ -28,12 +28,12 @@ class AdaptiveRateLimiter:
     Контролирует RPM и TPM независимо.
     """
 
-    def __init__(self, max_rpm: int = 100, max_tpm: int = 30000, window_seconds: float = 60.0):
+    def __init__(self, max_rpm: int = 15, max_tpm: int = 1000000, window_seconds: float = 60.0):
         self.max_rpm = max_rpm
         self.max_tpm = max_tpm
         self.window_seconds = window_seconds
 
-        self._rpm_tokens = float(max_rpm) / 2
+        self._rpm_tokens = 1.0  # Избегаем агрессивных burst'ов на старте
         self._rpm_per_second = max_rpm / window_seconds
 
         self._tpm_tokens = float(max_tpm) / 2
@@ -353,7 +353,7 @@ class EmbeddingService:
         for key in api_keys:
             http_options = gtypes.HttpOptions(
                 api_version=config.embedding_api_version,
-                httpxClient=self.client_manager.get_gemini_http_client(),
+                httpx_client=self.client_manager.get_gemini_http_client(),
             )
             gemini_client = genai.Client(api_key=key, http_options=http_options)
             embedder = GeminiEmbedder(
@@ -361,7 +361,7 @@ class EmbeddingService:
                 gemini_client=gemini_client,
                 output_dimensionality=config.vector_size,
             )
-            limiter = AdaptiveRateLimiter(max_rpm=100, max_tpm=30000)
+            limiter = AdaptiveRateLimiter(max_rpm=15, max_tpm=1000000)
             slots.append(_KeySlot(api_key=key, limiter=limiter, embedder=embedder))
             logger.info("[+] Добавлен ключ в пул [%s]: %s...%s", target_model, key[:4], key[-4:])
 

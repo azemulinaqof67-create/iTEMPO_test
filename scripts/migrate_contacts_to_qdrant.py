@@ -120,7 +120,6 @@ async def migrate(config=None, force=False):
         logger.info("Все контакты уже векторизованы.")
         return
 
-    # 6. Векторизация и импорт
     # Увеличиваем размер батча до 100 записей (максимально допустимый предел для одного запроса в Gemini API)
     batch_size = 100
     total = len(rows_to_migrate)
