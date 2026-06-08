@@ -776,16 +776,24 @@ function renderDocuments() {
       <div class="doc-card">
         <div>
           <span class="company-badge">${escapeHtml(doc.company_name)}</span>
+          ${doc.status === 'pending' ? '<span class="status-badge" style="background:#f59e0b; color:#fff; font-size:10px; margin-left:8px; padding:2px 6px; border-radius:4px; font-weight: 500;">На модерации</span>' : ''}
         </div>
         <div class="doc-name">📄 ${escapeHtml(doc.name)}</div>
         ${doc.title ? `<div class="doc-title" style="font-size: 13px; color: var(--accent); font-weight: 500; margin-top: -2px;">${escapeHtml(doc.title)}</div>` : ''}
         <div class="doc-meta">${size} · ${modified}</div>
         <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
         <div class="doc-actions">
+          ${(doc.status === 'pending' && currentUser.role === 'superadmin') ? `
+          <button class="btn btn-success" onclick="event.stopPropagation(); approveDocument('${escapeHtml(doc.path)}')">
+            <span>✓</span><span>Одобрить</span>
+          </button>` : ''}
           <button class="btn btn-secondary" onclick="event.stopPropagation(); viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
             <span>👁</span><span>Посмотреть</span>
           </button>
           ${canEdit ? `
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); showVersionsModal('${escapeHtml(doc.path)}')">
+            <span>🔄</span><span>Версии</span>
+          </button>
           <button class="btn btn-secondary" onclick="event.stopPropagation(); editDocument('${escapeHtml(doc.path)}', '${firstSegment}')" title="Изменить">
             <span>✏️</span><span>Изменить</span>
           </button>
@@ -1026,6 +1034,139 @@ async function finalUploadDocument() {
     toast('Не удалось сохранить документ: ' + e.message, 'error');
   }
 }
+
+async function approveDocument(path) {
+  if (!confirm(`Одобрить документ "${path}"?`)) return;
+  try {
+    await apiFetch('/api/documents/approve', {
+      method: 'POST',
+      body: JSON.stringify({path}),
+    });
+    toast('Документ одобрен', 'success');
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function showVersionsModal(path) {
+  openModal(
+    'История версий',
+    '<div class="loading-cell">Загрузка версий...</div>',
+    '<button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>',
+    true
+  );
+  try {
+    const data = await apiFetch(`/api/documents/versions?path=${encodeURIComponent(path)}`);
+    if (!data || !data.versions || data.versions.length === 0) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Версии не найдены</div>';
+      return;
+    }
+    
+    const bodyHtml = `
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr><th>Дата</th><th>Размер</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            ${data.versions.map(v => `
+              <tr>
+                <td>${new Date(v.timestamp * 1000).toLocaleString('ru')}</td>
+                <td>${(v.size / 1024).toFixed(1)} KB</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" onclick="restoreVersion('${path}', '${v.path}')">Восстановить</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function restoreVersion(originalPath, versionPath) {
+  if (!confirm('Текущая версия файла будет перезаписана (и сохранена в историю). Продолжить?')) return;
+  try {
+    await apiFetch('/api/documents/versions/restore', {
+      method: 'POST',
+      body: JSON.stringify({original_path: originalPath, version_path: versionPath}),
+    });
+    toast('Версия восстановлена', 'success');
+    closeModal();
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function showTrashModal() {
+  openModal(
+    'Корзина',
+    '<div class="loading-cell">Загрузка...</div>',
+    `
+    <button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-danger" onclick="emptyTrash()">Очистить корзину</button>
+    `,
+    true
+  );
+  try {
+    const data = await apiFetch('/api/documents/trash');
+    if (!data || !data.items || data.items.length === 0) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Корзина пуста</div>';
+      return;
+    }
+    
+    const bodyHtml = `
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr><th>Имя</th><th>Оригинальный путь</th><th>Удален</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            ${data.items.map(item => `
+              <tr>
+                <td>${escapeHtml(item.name)}</td>
+                <td><span style="font-size:11px">${escapeHtml(item.original_path)}</span></td>
+                <td>${new Date(item.deleted_at * 1000).toLocaleString('ru')}</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" onclick="restoreFromTrash('${item.path}')">Восстановить</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function restoreFromTrash(path) {
+  try {
+    await apiFetch('/api/documents/trash/restore', {
+      method: 'POST',
+      body: JSON.stringify({path}),
+    });
+    toast('Файл восстановлен', 'success');
+    showTrashModal();
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function emptyTrash() {
+  if (!confirm('Вы уверены, что хотите навсегда очистить корзину?')) return;
+  try {
+    await apiFetch('/api/documents/trash/empty', {
+      method: 'DELETE'
+    });
+    toast('Корзина очищена', 'success');
+    closeModal();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 
 async function deleteDocument(path) {
   if (!confirm(`Удалить документ "${path}"?\nПереиндексация потребуется.`)) return;
