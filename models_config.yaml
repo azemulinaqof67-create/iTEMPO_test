@@ -17,6 +17,10 @@ text_model:
     - "gemini-3.5-flash"
     # Tier-2: только если Tier-1 тоже недоступна
     - "gemini-2.5-flash"
+    # Tier-3: только если Tier-2 тоже недоступна
+    - "gemini-3.1-flash"
+    # Tier-4: только если Tier-3 тоже недоступна
+    - "gemma-4-26b-a4b-it"
   prompt:
     template: |
       Ты — корпоративный AI-ассистент холдинговой компании ТЭМПО.
