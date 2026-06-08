@@ -182,16 +182,23 @@ class HybridSearchService:
         # 3. Запрос к Qdrant
         client = self.client_manager.get_qdrant_client()
         try:
+            # ВАЖНО: фильтр передаётся в каждый Prefetch-запрос напрямую.
+            # При prefetch + FusionQuery кандидаты для слияния собираются на этапе Prefetch,
+            # и верхний query_filter может применяться уже после отбора кандидатов
+            # (зависит от версии Qdrant). Чтобы гарантировать строгую фильтрацию
+            # по предприятию ДО слияния RRF, фильтр передаём в каждый Prefetch.
             prefetch = [
                 models.Prefetch(
                     query=query_list,
                     using="",
                     limit=limit,
+                    filter=qdrant_filter,   # ← строгий фильтр на уровне кандидатов (dense)
                 ),
                 models.Prefetch(
                     query=sparse_vector,
                     using="sparse",
                     limit=limit,
+                    filter=qdrant_filter,   # ← строгий фильтр на уровне кандидатов (sparse)
                 )
             ]
             
@@ -201,7 +208,7 @@ class HybridSearchService:
                     collection_name=self.config.collection_name,
                     prefetch=prefetch,
                     query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    query_filter=qdrant_filter,
+                    query_filter=qdrant_filter,  # страховочный фильтр на финальном шаге
                     limit=limit,
                     with_payload=True,
                 ),

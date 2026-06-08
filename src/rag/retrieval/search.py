@@ -81,7 +81,10 @@ class SearchService:
             # 1. Проактивный поиск
             if self.config.use_rag_fusion:
                 candidates = await self.fusion.search_with_fusion(
-                    query, limit=self.config.rerank_max_docs, company_id=company_id
+                    query,
+                    limit=self.config.rerank_max_docs,
+                    company_id=company_id,
+                    qdrant_filter=qdrant_filter,  # фильтр прокидывается во все варианты запроса
                 )
             else:
                 candidates = await self.hybrid.search(
@@ -114,7 +117,10 @@ class SearchService:
 
             if self.config.use_fallback and (is_empty or is_incorrect):
                 fallback_docs = await self.fallback.execute_fallback(
-                    query, limit=self.config.rerank_max_docs, company_id=company_id
+                    query,
+                    limit=self.config.rerank_max_docs,
+                    company_id=company_id,
+                    qdrant_filter=qdrant_filter,
                 )
                 # Добавляем в конец списка candidates с дедупликацией
                 for doc in fallback_docs:

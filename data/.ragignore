@@ -4,3 +4,5 @@ README.md
 .ragignore
 
 *index.md
+.trash*
+.versions*

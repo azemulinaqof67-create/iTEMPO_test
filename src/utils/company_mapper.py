@@ -72,6 +72,12 @@ def _normalize_company_id(company_id: str) -> str:
     cid = company_id.strip().lower()
     return _ALIAS_TO_ID.get(cid, cid)
 
+def normalize_company_id(company_id: str) -> str:
+    """Публичная функция нормализации ID компании. Приводит русские и смешанные
+    наименования к короткому латинскому ключу (например, 'КМК' → 'kmk').
+    Используется для построения фильтров по полю company_tag."""
+    return _normalize_company_id(company_id)
+
 def get_company_keywords(company_id: str) -> list[str]:
     """Возвращает список ключевых слов для поиска в SQLite (напр. 'технотрон')."""
     normalized_id = _normalize_company_id(company_id)

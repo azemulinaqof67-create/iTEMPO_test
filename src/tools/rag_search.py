@@ -4,7 +4,7 @@ from qdrant_client import models
 from src.models.state import QueryIntent
 from src.rag.retrieval.search import SearchService
 from src.core.config import Config
-from src.utils.company_mapper import get_full_company_names
+from src.utils.company_mapper import get_full_company_names, normalize_company_id
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,8 @@ class FilteredRAGTool:
     async def search(self, query: str, intent_data: QueryIntent) -> str:
         """
         Выполняет поиск с трансляцией интентов в фильтры Qdrant.
+        Применяет строгий (must) фильтр по company_tag, чтобы гарантировать
+        изоляцию данных между предприятиями.
         """
         try:
             must_conditions = []
@@ -27,59 +29,42 @@ class FilteredRAGTool:
             
             # 1. Обязательная фильтрация по компании (MUST)
             company_id = intent_data.target_company
-            is_topic_shift = intent_data.is_topic_shift
 
-            if company_id and not is_topic_shift:
-                # Получаем официальные названия из единого маппера
-                full_names = get_full_company_names(company_id)
-                if not full_names:
-                    full_names = [company_id]
+            if company_id:
+                # Нормализуем ID компании к короткому ключу (например, "КМК" → "kmk")
+                # для фильтрации по полю company_tag, которое хранит папочный ключ
+                company_tag_id = normalize_company_id(company_id)
                 
-                # Ищем документы конкретной компании ИЛИ общие документы холдинга
-                should_matches = [
-                    models.FieldCondition(key="company", match=models.MatchText(text=company_id)),
-                    models.FieldCondition(key="company", match=models.MatchValue(value="ГК «ТЭМПО»")),
-                    models.FieldCondition(key="department", match=models.MatchValue(value="General")),
-                    models.FieldCondition(key="company_tag", match=models.MatchValue(value="shared")),
-                    models.FieldCondition(key="metadata.organization", match=models.MatchValue(value="shared"))
-                ]
-                
-                for name in full_names:
-                    should_matches.append(
-                        models.FieldCondition(key="company", match=models.MatchValue(value=name))
-                    )
-
-                company_filter = models.Filter(should=should_matches)
-                should_conditions.append(company_filter)
-            elif is_topic_shift:
-                should_conditions.append(
-                    models.FieldCondition(key="department", match=models.MatchValue(value="General"))
+                # Строгий фильтр: документ ОБЯЗАН принадлежать компании пользователя
+                # ИЛИ быть в общей папке (shared). Никаких исключений для других компаний.
+                company_access_filter = models.Filter(
+                    should=[
+                        # Документы выбранной компании (по папочному тегу data/<company_tag>/)
+                        models.FieldCondition(
+                            key="company_tag",
+                            match=models.MatchValue(value=company_tag_id)
+                        ),
+                        # Общие документы холдинга (папка data/shared/)
+                        models.FieldCondition(
+                            key="company_tag",
+                            match=models.MatchValue(value="shared")
+                        ),
+                    ]
+                )
+                must_conditions.append(company_access_filter)
+                logger.info(
+                    f"--- RAG COMPANY FILTER (STRICT): tag='{company_tag_id}' OR 'shared' ---"
                 )
             
-            # 2. Рекомендательная фильтрация (SHOULD) - не блокирует, а помогает ранжированию
-            if intent_data.intent == "emergency":
-                should_conditions.extend([
-                    models.FieldCondition(
-                        key="tags",
-                        match=models.MatchAny(any=["инцидент", "травма", "ЧС", "скорая", "помощь", "пожар", "безопасность"])
-                    ),
-                    models.FieldCondition(key="department", match=models.MatchValue(value="Security")),
-                    models.FieldCondition(key="department", match=models.MatchValue(value="Safety"))
-                ])
-            elif intent_data.intent == "hr_policy":
-                should_conditions.append(
-                    models.FieldCondition(key="department", match=models.MatchAny(any=["HR", "Routine", "General"]))
-                )
-
-            # Создание объекта фильтра Qdrant
+            # Создание объекта фильтра Qdrant (только обязательные must-условия для изоляции компаний)
             qdrant_filter = models.Filter(
-                must=must_conditions if must_conditions else None,
-                should=should_conditions if should_conditions else None
+                must=must_conditions if must_conditions else None
             )
             
             logger.info(f"--- RAG SEARCH WITH FILTERS ---")
             logger.info(f"Query: {query}")
             logger.info(f"Intent: {intent_data.intent}")
+            logger.info(f"Company ID: {company_id}")
             if must_conditions or should_conditions:
                 logger.info(f"Qdrant Filters: {len(must_conditions)} must, {len(should_conditions)} should")
 
