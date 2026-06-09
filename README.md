@@ -63,5 +63,17 @@ uv run run_tg_bot.py
 # MAX-бот (только MAX мессенджер)
 uv run run_max_bot.py
 
-# Оба бота (Telegram + MAX) одновременно в одном event loop
+# Оба бота (Telegram + MAX) + Панель администратора одновременно
 uv run run_all_bots.py
+
+# Только панель администратора (бэкенд на FastAPI)
+uv run run_server.py
+```
+
+## Дополнительная документация
+
+- [Панель администратора и управление базой данных контактов (WAL, Бэкапы, Docker/Ubuntu)](docs/ADMIN_PANEL.md)
+- [Интеграция с мессенджером MAX](docs/max_documentation.md)
+- [Служба поддержки IntraService](docs/INTRASERVICE.md)
+- [Голосовое управление (Voice Processing)](docs/VOICE_PROCESSING.md)
+- [Интеграция с Active Directory (AD)](docs/AD_INTEGRATION.md)
