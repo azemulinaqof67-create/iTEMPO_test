@@ -49,7 +49,7 @@ class DocumentProcessor:
 
     def _normalize_folder(self, folder: str) -> str:
         folder = folder.lower().strip()
-        folder = re.sub(r'^\d+_', '', folder)
+        folder = re.sub(r"^\d+_", "", folder)
         if folder == "policies":
             return "policy"
         if folder == "locations":
@@ -65,23 +65,19 @@ class DocumentProcessor:
     def extract_tags(self, source_path: str) -> dict:
         path_str = source_path.replace("\\", "/")
         if path_str.startswith("data/"):
-            path_str = path_str[len("data/"):]
-        
+            path_str = path_str[len("data/") :]
+
         parts = path_str.split("/")
         filename = parts[-1]
         folder_parts = parts[:-1]
-        
+
         filename_clean = Path(filename).stem
-        
+
         if not folder_parts:
-            return {
-                "doc_type": "general",
-                "company_tag": "all",
-                "filename_clean": filename_clean
-            }
-        
+            return {"doc_type": "general", "company_tag": "all", "filename_clean": filename_clean}
+
         first_folder = folder_parts[0]
-        if re.match(r'^\d+_', first_folder):
+        if re.match(r"^\d+_", first_folder):
             company_tag = "all"
             doc_type_parts = []
             for f in folder_parts:
@@ -93,12 +89,8 @@ class DocumentProcessor:
             for f in folder_parts[1:]:
                 doc_type_parts.append(self._normalize_folder(f))
             doc_type = "_".join(doc_type_parts)
-            
-        return {
-            "doc_type": doc_type,
-            "company_tag": company_tag,
-            "filename_clean": filename_clean
-        }
+
+        return {"doc_type": doc_type, "company_tag": company_tag, "filename_clean": filename_clean}
 
     def chunk_documents(self, documents: List[Dict]) -> List[Dict]:
         """Прокси к чанкеру с обогащением метаданными из пути."""

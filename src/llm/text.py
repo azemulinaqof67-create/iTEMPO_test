@@ -59,7 +59,9 @@ class TextLLMService:
         Unified Gemini API call point with retry/fallback.
         """
         return await self._retry_with_fallback(
-            lambda model, api_version, api_key: self._execute_api_call(contents, generation_config, model, api_version, api_key),
+            lambda model, api_version, api_key: self._execute_api_call(
+                contents, generation_config, model, api_version, api_key
+            ),
             operation_name,
         )
 
@@ -68,7 +70,9 @@ class TextLLMService:
         Gemini API streaming call with retry/fallback at stream start.
         """
         return await self._retry_with_fallback(
-            lambda model, api_version, api_key: self._execute_api_call_stream(contents, generation_config, model, api_version, api_key),
+            lambda model, api_version, api_key: self._execute_api_call_stream(
+                contents, generation_config, model, api_version, api_key
+            ),
             operation_name,
         )
 
@@ -79,7 +83,9 @@ class TextLLMService:
         model = self._get_full_model_name(model_name)
         return await client.aio.models.generate_content(model=model, contents=contents, config=generation_config)
 
-    async def _execute_api_call_stream(self, contents, generation_config, model_name: str, api_version: str, api_key: str):
+    async def _execute_api_call_stream(
+        self, contents, generation_config, model_name: str, api_version: str, api_key: str
+    ):
         """Execute single API call in streaming mode (without retry)."""
         client = self.client_manager.get_gemini_client(api_version, api_key=api_key)
         model = self._get_full_model_name(model_name)
@@ -188,14 +194,17 @@ class TextLLMService:
                     # Log current model and API version
                     logger.debug(
                         "Retry attempt %d/%d — модель: %s (API: %s)",
-                        attempt + 1, max_retries, current_model, current_api_version,
+                        attempt + 1,
+                        max_retries,
+                        current_model,
+                        current_api_version,
                     )
 
                     # Таймауты по модели (в секундах).
                     # Если модель не в словаре — используется DEFAULT_TIMEOUT.
                     MODEL_TIMEOUTS = {
-                        "gemini-2.5-flash-lite": 40.0,          # стабильная, но может давать 20-35с при нагрузке
-                        "gemini-3.1-flash-lite": 40.0,          # стабильная версия
+                        "gemini-2.5-flash-lite": 40.0,  # стабильная, но может давать 20-35с при нагрузке
+                        "gemini-3.1-flash-lite": 40.0,  # стабильная версия
                     }
                     DEFAULT_TIMEOUT = 30.0
                     timeout = MODEL_TIMEOUTS.get(current_model, DEFAULT_TIMEOUT)
@@ -214,14 +223,15 @@ class TextLLMService:
                     except asyncio.TimeoutError as te:
                         logger.debug(
                             "⏰ Таймаут %.0fs для модели %s (попытка %d/%d) — переключаю на fallback",
-                            timeout, current_model, attempt + 1, max_retries,
+                            timeout,
+                            current_model,
+                            attempt + 1,
+                            max_retries,
                         )
                         akm = self.client_manager.api_key_manager
                         # Таймаут = модель перегружена, переключаемся на fallback-модель
                         if self.model_fallback_manager:
-                            new_model = self.model_fallback_manager.rotate_model(
-                                current_model, f"timeout {timeout}s"
-                            )
+                            new_model = self.model_fallback_manager.rotate_model(current_model, f"timeout {timeout}s")
                             if new_model:
                                 current_model = new_model
                                 current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
@@ -252,8 +262,7 @@ class TextLLMService:
                     )
                     if is_auth_error:
                         logger.warning(
-                            "🔑 Ошибка авторизации (401/403) для API ключа (модель: %s): %s",
-                            current_model, error_str
+                            "🔑 Ошибка авторизации (401/403) для API ключа (модель: %s): %s", current_model, error_str
                         )
                         akm = self.client_manager.api_key_manager
                         if akm:
@@ -264,7 +273,7 @@ class TextLLMService:
                             if new_key:
                                 logger.debug(
                                     "🔄 Ошибка авторизации: Переключаюсь на следующий API ключ: %s",
-                                    akm.get_masked_key(new_key)
+                                    akm.get_masked_key(new_key),
                                 )
                                 continue
                         raise LLMError(f"Ошибка авторизации API: {error_str}") from e
@@ -282,7 +291,11 @@ class TextLLMService:
                             # =============================================
                             logger.debug(
                                 "⏳ RPM лимит для %s (модель: %s, retry_delay: %.0fs), попытка %d/%d",
-                                operation_name, current_model, retry_delay, attempt + 1, max_retries,
+                                operation_name,
+                                current_model,
+                                retry_delay,
+                                attempt + 1,
+                                max_retries,
                             )
 
                             # Помечаем текущую модель на кулдаун ПЕРЕД ротацией
@@ -296,13 +309,16 @@ class TextLLMService:
                                 if new_model:
                                     # Есть доступная модель — переключаемся без ожидания
                                     current_model = new_model
-                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(
+                                        new_model
+                                    )
                                     akm = self.client_manager.api_key_manager
                                     if akm:
                                         akm.reset_exhausted_keys()
                                     logger.debug(
                                         "🔄 RPM: переключаюсь на доступную модель %s (API: %s)",
-                                        new_model, current_api_version,
+                                        new_model,
+                                        current_api_version,
                                     )
                                     continue
 
@@ -319,12 +335,16 @@ class TextLLMService:
                                         akm.reset_exhausted_keys()
                                     # После сна пересчитываем лучшую модель
                                     current_model = self.model_fallback_manager.get_best_available_model()
-                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(
+                                        current_model
+                                    )
                                     continue
                                 elif wait_time == 0.0:
                                     # Есть доступная модель (ситуация гонки с другими задачами)
                                     current_model = self.model_fallback_manager.get_best_available_model()
-                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(
+                                        current_model
+                                    )
                                     akm = self.client_manager.api_key_manager
                                     if akm:
                                         akm.reset_exhausted_keys()
@@ -347,7 +367,9 @@ class TextLLMService:
                             # =============================================
                             logger.debug(
                                 "🚫 RPD лимит (дневной) для модели %s, попытка %d/%d",
-                                current_model, attempt + 1, max_retries,
+                                current_model,
+                                attempt + 1,
+                                max_retries,
                             )
 
                             akm = self.client_manager.api_key_manager
@@ -359,7 +381,8 @@ class TextLLMService:
                                 if new_key:
                                     logger.debug(
                                         "🔄 RPD: Переключаюсь на следующий API ключ: %s для модели %s",
-                                        akm.get_masked_key(new_key), current_model
+                                        akm.get_masked_key(new_key),
+                                        current_model,
                                     )
                                     continue
 
@@ -372,12 +395,15 @@ class TextLLMService:
                                 )
                                 if new_model:
                                     current_model = new_model
-                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(new_model)
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(
+                                        new_model
+                                    )
                                     if akm:
                                         akm.reset_exhausted_keys()
                                     logger.debug(
                                         "🔄 RPD: переключаюсь на fallback -> %s (API: %s)",
-                                        new_model, current_api_version,
+                                        new_model,
+                                        current_api_version,
                                     )
                                     continue
 
@@ -391,14 +417,14 @@ class TextLLMService:
                                     )
                                     await asyncio.sleep(wait_time)
                                     current_model = self.model_fallback_manager.get_best_available_model()
-                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(current_model)
+                                    current_api_version = self.model_fallback_manager.get_api_version_for_model(
+                                        current_model
+                                    )
                                     if akm:
                                         akm.reset_exhausted_keys()
                                     continue
 
-                            raise LLMError(
-                                f"Дневной лимит исчерпан для всех моделей: {operation_name}."
-                            ) from e
+                            raise LLMError(f"Дневной лимит исчерпан для всех моделей: {operation_name}.") from e
 
                     # --- Server errors / Bad Request / Not Found: switch model ---
                     error_lower = error_str.lower()
@@ -437,7 +463,7 @@ class TextLLMService:
                         if wait_time is not None and wait_time > 0:
                             logger.info(
                                 "💤 Все модели перегружены или недоступны (503). Жду %.0fs перед повторной попыткой...",
-                                wait_time
+                                wait_time,
                             )
                             await asyncio.sleep(wait_time)
                             akm = self.client_manager.api_key_manager
@@ -600,7 +626,9 @@ class TextLLMService:
             total += len(chunk) + 2
         return result
 
-    async def decontextualize_query(self, query: str, history: List[Dict[str, str]], company_name: Optional[str] = None) -> str:
+    async def decontextualize_query(
+        self, query: str, history: List[Dict[str, str]], company_name: Optional[str] = None
+    ) -> str:
         """
         Переписывает запрос с учетом истории и текущей компании.
         """
@@ -668,10 +696,7 @@ class TextLLMService:
         formatted_time = format_time_for_prompt(time_info)
 
         # Format the prompt with both time and context
-        return self.model_config.system_prompt_template.format(
-            time_info=formatted_time,
-            context=context
-        )
+        return self.model_config.system_prompt_template.format(time_info=formatted_time, context=context)
 
     def _get_full_model_name(self, model_name: str) -> str:
         """Формирует полное имя модели для API."""
@@ -680,12 +705,12 @@ class TextLLMService:
         return model_name
 
     async def generate_structured(
-        self, 
-        prompt: str, 
-        response_schema: Any, 
-        model_override: str = None, 
+        self,
+        prompt: str,
+        response_schema: Any,
+        model_override: str = None,
         temperature: float = 0.0,
-        api_version: str = "v1beta"
+        api_version: str = "v1beta",
     ) -> Any:
         """
         Генерация структурированного ответа с использованием Pydantic схемы.
@@ -699,21 +724,24 @@ class TextLLMService:
             )
 
             target_model = model_override or self.config.text_model
-            
+
             response, _ = await self._retry_with_fallback(
-                lambda model, api_ver, api_key: self._execute_api_call(prompt, generation_config, model, api_ver, api_key),
+                lambda model, api_ver, api_key: self._execute_api_call(
+                    prompt, generation_config, model, api_ver, api_key
+                ),
                 "structured generation",
                 initial_model=target_model,
-                initial_api_version=api_version
+                initial_api_version=api_version,
             )
-            
+
             if hasattr(response, "parsed") and response.parsed:
                 return response.parsed
-                
+
             # Ручной парсинг если SDK не справился
             import json
+
             return response_schema(**json.loads(response.text))
-            
+
         except Exception as e:
             logger.exception(f"Structured generation failed: {e}")
             raise LLMError(f"Structured generation failed: {e}") from e
@@ -729,7 +757,11 @@ class TextLLMService:
 
             # Используем локальную модель если задан override, иначе из конфига
             target_model = model_override or self.config.text_model
-            target_api_version = self.model_fallback_manager.get_api_version_for_model(target_model) if self.model_fallback_manager else self.config.text_api_version
+            target_api_version = (
+                self.model_fallback_manager.get_api_version_for_model(target_model)
+                if self.model_fallback_manager
+                else self.config.text_api_version
+            )
 
             # Для generate напрямую вызываем версию с параметрами, чтобы избежать ротации в конфиге
             # Но мы можем использовать _retry_with_fallback, если обновим его поддержку начальной модели.
@@ -737,10 +769,12 @@ class TextLLMService:
             # или просто обновим _call_api.
 
             response, _ = await self._retry_with_fallback(
-                lambda model, api_version, api_key: self._execute_api_call(prompt, generation_config, model, api_version, api_key),
+                lambda model, api_version, api_key: self._execute_api_call(
+                    prompt, generation_config, model, api_version, api_key
+                ),
                 "text generation",
                 initial_model=target_model,
-                initial_api_version=target_api_version
+                initial_api_version=target_api_version,
             )
             return response.text
         except Exception as e:

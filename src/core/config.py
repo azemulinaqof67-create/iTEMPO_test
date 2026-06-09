@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Union
 
-import yaml
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
@@ -129,18 +128,32 @@ class RAGConfig:
             collection_name=_get_str("COLLECTION_NAME", qdrant_y, "collection_name", c.collection_name),
             search_limit=_get_int("SEARCH_LIMIT", rag_y, "search_limit", c.search_limit),
             fetch_limit=_get_int("FETCH_LIMIT", rag_y, "fetch_limit", c.fetch_limit),
-            use_contextual_retrieval=_get_bool("USE_CONTEXTUAL_RETRIEVAL", rag_y, "use_contextual_retrieval", c.use_contextual_retrieval),
+            use_contextual_retrieval=_get_bool(
+                "USE_CONTEXTUAL_RETRIEVAL", rag_y, "use_contextual_retrieval", c.use_contextual_retrieval
+            ),
             use_hybrid_search=_get_bool("USE_HYBRID_SEARCH", rag_y, "use_hybrid_search", c.use_hybrid_search),
             use_rag_fusion=_get_bool("USE_RAG_FUSION", rag_y, "use_rag_fusion", c.use_rag_fusion),
             use_llm_rerank=_get_bool("USE_LLM_RERANK", rag_y, "use_llm_rerank", c.use_llm_rerank),
-            use_semantic_chunking=_get_bool("USE_SEMANTIC_CHUNKING", rag_y, "use_semantic_chunking", c.use_semantic_chunking),
-            use_parent_child_chunks=_get_bool("USE_PARENT_CHILD_CHUNKS", rag_y, "use_parent_child_chunks", c.use_parent_child_chunks),
+            use_semantic_chunking=_get_bool(
+                "USE_SEMANTIC_CHUNKING", rag_y, "use_semantic_chunking", c.use_semantic_chunking
+            ),
+            use_parent_child_chunks=_get_bool(
+                "USE_PARENT_CHILD_CHUNKS", rag_y, "use_parent_child_chunks", c.use_parent_child_chunks
+            ),
             use_fallback=_get_bool("USE_FALLBACK", rag_y, "use_fallback", c.use_fallback),
             enable_metrics=_get_bool("ENABLE_METRICS", rag_y, "enable_metrics", c.enable_metrics),
-            use_incremental_updates=_get_bool("USE_INCREMENTAL_UPDATES", rag_y, "use_incremental_updates", c.use_incremental_updates),
-            contextual_text_model=_get_str("CONTEXTUAL_TEXT_MODEL", rag_y, "contextual_text_model", c.contextual_text_model),
-            contextual_max_doc_chars=_get_int("CONTEXTUAL_MAX_DOC_CHARS", rag_y, "contextual_max_doc_chars", c.contextual_max_doc_chars),
-            contextual_parallelism=_get_int("CONTEXTUAL_PARALLELISM", rag_y, "contextual_parallelism", c.contextual_parallelism),
+            use_incremental_updates=_get_bool(
+                "USE_INCREMENTAL_UPDATES", rag_y, "use_incremental_updates", c.use_incremental_updates
+            ),
+            contextual_text_model=_get_str(
+                "CONTEXTUAL_TEXT_MODEL", rag_y, "contextual_text_model", c.contextual_text_model
+            ),
+            contextual_max_doc_chars=_get_int(
+                "CONTEXTUAL_MAX_DOC_CHARS", rag_y, "contextual_max_doc_chars", c.contextual_max_doc_chars
+            ),
+            contextual_parallelism=_get_int(
+                "CONTEXTUAL_PARALLELISM", rag_y, "contextual_parallelism", c.contextual_parallelism
+            ),
             vector_fetch_limit=_get_int("VECTOR_FETCH_LIMIT", rag_y, "vector_fetch_limit", c.vector_fetch_limit),
             bm25_fetch_limit=_get_int("BM25_FETCH_LIMIT", rag_y, "bm25_fetch_limit", c.bm25_fetch_limit),
             fusion_fetch_limit=_get_int("FUSION_FETCH_LIMIT", rag_y, "fusion_fetch_limit", c.fusion_fetch_limit),
@@ -151,11 +164,15 @@ class RAGConfig:
             rerank_doc_chars=_get_int("RERANK_DOC_CHARS", rag_y, "rerank_doc_chars", c.rerank_doc_chars),
             rerank_min_docs=_get_int("RERANK_MIN_DOCS", rag_y, "rerank_min_docs", c.rerank_min_docs),
             semantic_chunk_size=_get_int("SEMANTIC_CHUNK_SIZE", rag_y, "semantic_chunk_size", c.semantic_chunk_size),
-            semantic_similarity_threshold=_get_float("SEMANTIC_SIMILARITY_THRESHOLD", rag_y, "semantic_similarity_threshold", c.semantic_similarity_threshold),
+            semantic_similarity_threshold=_get_float(
+                "SEMANTIC_SIMILARITY_THRESHOLD", rag_y, "semantic_similarity_threshold", c.semantic_similarity_threshold
+            ),
             parent_chunk_size=_get_int("PARENT_CHUNK_SIZE", rag_y, "parent_chunk_size", c.parent_chunk_size),
             child_chunk_size=_get_int("CHILD_CHUNK_SIZE", rag_y, "child_chunk_size", c.child_chunk_size),
             bm25_min_token_len=_get_int("BM25_MIN_TOKEN_LEN", rag_y, "bm25_min_token_len", c.bm25_min_token_len),
-            document_hashes_path=Path(_get_str("DOCUMENT_HASHES_PATH", qdrant_y, "document_hashes_path", str(c.document_hashes_path))),
+            document_hashes_path=Path(
+                _get_str("DOCUMENT_HASHES_PATH", qdrant_y, "document_hashes_path", str(c.document_hashes_path))
+            ),
         )
 
 
@@ -306,14 +323,24 @@ class MemoryConfig:
 
         return cls(
             chat_history_enabled=_get_bool("CHAT_HISTORY_ENABLED", "chat_history_enabled", c.chat_history_enabled),
-            chat_history_db_path=Path(_get_str("CHAT_HISTORY_DB_PATH", "chat_history_db_path", str(c.chat_history_db_path))),
+            chat_history_db_path=Path(
+                _get_str("CHAT_HISTORY_DB_PATH", "chat_history_db_path", str(c.chat_history_db_path))
+            ),
             max_history_messages=_get_int("MAX_HISTORY_MESSAGES", "max_history_messages", c.max_history_messages),
-            summarization_threshold=_get_int("SUMMARIZATION_THRESHOLD", "summarization_threshold", c.summarization_threshold),
+            summarization_threshold=_get_int(
+                "SUMMARIZATION_THRESHOLD", "summarization_threshold", c.summarization_threshold
+            ),
             max_context_tokens=_get_int("MAX_CONTEXT_TOKENS", "max_context_tokens", c.max_context_tokens),
-            enable_auto_summarization=_get_bool("ENABLE_AUTO_SUMMARIZATION", "enable_auto_summarization", c.enable_auto_summarization),
-            messages_summarize_threshold=_get_int("MESSAGES_SUMMARIZE_THRESHOLD", "messages_summarize_threshold", c.messages_summarize_threshold),
+            enable_auto_summarization=_get_bool(
+                "ENABLE_AUTO_SUMMARIZATION", "enable_auto_summarization", c.enable_auto_summarization
+            ),
+            messages_summarize_threshold=_get_int(
+                "MESSAGES_SUMMARIZE_THRESHOLD", "messages_summarize_threshold", c.messages_summarize_threshold
+            ),
             messages_keep_recent=_get_int("MESSAGES_KEEP_RECENT", "messages_keep_recent", c.messages_keep_recent),
-            max_chars_per_history_message=_get_int("MAX_CHARS_PER_HISTORY_MESSAGE", "max_chars_per_history_message", c.max_chars_per_history_message),
+            max_chars_per_history_message=_get_int(
+                "MAX_CHARS_PER_HISTORY_MESSAGE", "max_chars_per_history_message", c.max_chars_per_history_message
+            ),
         )
 
 
@@ -368,6 +395,7 @@ class Config:
         if yaml_path.exists():
             try:
                 import yaml
+
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     yaml_data = yaml.safe_load(f) or {}
             except Exception as e:
@@ -413,7 +441,7 @@ class Config:
         env_keys = []
         for k, v in os.environ.items():
             if k.startswith("GEMINI_API_KEY_") and v.strip():
-                suffix = k[len("GEMINI_API_KEY_"):]
+                suffix = k[len("GEMINI_API_KEY_") :]
                 if suffix.isdigit():
                     env_keys.append((int(suffix), v.strip()))
         env_keys.sort(key=lambda x: x[0])
@@ -438,7 +466,9 @@ class Config:
             logger.info(f"🔄 Перезагружено {len(api_keys)} уникальных API ключей")
         self.text_model = os.getenv("GEMINI_TEXT_MODEL", self.text_model)
         self.audio_model = os.getenv("GEMINI_AUDIO_MODEL", self.audio_model)
-        raw_embedding_models = os.getenv("GEMINI_EMBEDDING_MODEL", ",".join(self.embedding_models) if self.embedding_models else self.embedding_model)
+        raw_embedding_models = os.getenv(
+            "GEMINI_EMBEDDING_MODEL", ",".join(self.embedding_models) if self.embedding_models else self.embedding_model
+        )
         if raw_embedding_models:
             self.embedding_models = [m.strip() for m in raw_embedding_models.split(",") if m.strip()]
             self.embedding_model = self.embedding_models[0]
@@ -474,7 +504,7 @@ class Config:
         env_keys = []
         for k, v in os.environ.items():
             if k.startswith("GEMINI_API_KEY_") and v.strip():
-                suffix = k[len("GEMINI_API_KEY_"):]
+                suffix = k[len("GEMINI_API_KEY_") :]
                 if suffix.isdigit():
                     env_keys.append((int(suffix), v.strip()))
         env_keys.sort(key=lambda x: x[0])
@@ -505,6 +535,7 @@ class Config:
         if yaml_path.exists():
             try:
                 import yaml
+
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     yaml_data = yaml.safe_load(f) or {}
             except Exception as e:
@@ -593,7 +624,7 @@ class Config:
             for x in whitelist_str.split(","):
                 if x.strip().isdigit():
                     whitelist.append(int(x.strip()))
-        
+
         default_city = _get_str("DEFAULT_CITY", app_y, "default_city", "Набережные Челны")
         rag_conf = RAGConfig.from_env(yaml_data=yaml_data)
         if models_config.contextual_retrieval:

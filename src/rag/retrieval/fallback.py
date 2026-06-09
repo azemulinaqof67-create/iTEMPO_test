@@ -31,11 +31,8 @@ class FallbackRetriever:
         then performs exactly 1 hybrid search vector call.
         """
         prompt_template = self.prompt_manager.get_prompt("fallback")
-        fallback_query = await self.llm.generate(
-            prompt_template.format(query=query),
-            temperature=0.3
-        )
-        fallback_query = fallback_query.strip().strip('"\'')
+        fallback_query = await self.llm.generate(prompt_template.format(query=query), temperature=0.3)
+        fallback_query = fallback_query.strip().strip("\"'")
         if not fallback_query:
             fallback_query = query
         return await self.search_service.search(

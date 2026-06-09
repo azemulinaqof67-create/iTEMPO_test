@@ -2,18 +2,22 @@ import asyncio
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
+
 import asyncpg
+
 
 class AsyncHistoryManager:
     """Асинхронный менеджер истории для клиента с использованием asyncpg."""
+
     def __init__(self, db_url: str = None):
         if db_url is None:
             # Fallback to loading config if not explicitly provided
             try:
                 from src.core.config import Config
+
                 db_url = Config.from_env().database_url
             except Exception:
-                db_url = "postgresql://postgres:123456@127.0.0.1:5432/itempo" # fallback
+                db_url = "postgresql://postgres:123456@127.0.0.1:5432/itempo"  # fallback
         self.db_url = db_url
         self._pool: Optional[asyncpg.Pool] = None
         self._init_lock = asyncio.Lock()
@@ -22,7 +26,7 @@ class AsyncHistoryManager:
     async def get_pool(self) -> asyncpg.Pool:
         if self._pool and self._initialized:
             return self._pool
-            
+
         async with self._init_lock:
             if self._pool and self._initialized:
                 return self._pool
@@ -91,7 +95,8 @@ class AsyncHistoryManager:
                         INSERT INTO client_user_profile (key, value) VALUES ($1, $2)
                         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                         """,
-                        key, value
+                        key,
+                        value,
                     )
 
     async def get_profile_data(self) -> Dict[str, str]:
@@ -99,7 +104,7 @@ class AsyncHistoryManager:
         pool = await self.get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT key, value FROM client_user_profile")
-            return {row['key']: row['value'] for row in rows}
+            return {row["key"]: row["value"] for row in rows}
 
     async def get_chats(self) -> List[Dict]:
         """Возвращает список чатов (без сообщений, но с количеством сообщений)"""
@@ -110,16 +115,18 @@ class AsyncHistoryManager:
                 FROM client_chats c
                 ORDER BY c.updated_at DESC
             """)
-            
+
             chats = []
             for row in rows:
-                chats.append({
-                    "id": row["id"],
-                    "title": row["title"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                    "message_count": row["message_count"],
-                })
+                chats.append(
+                    {
+                        "id": row["id"],
+                        "title": row["title"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                        "message_count": row["message_count"],
+                    }
+                )
             return chats
 
     async def get_chat(self, chat_id: str) -> Optional[Dict]:
@@ -134,11 +141,13 @@ class AsyncHistoryManager:
 
             messages = []
             for row in msg_rows:
-                messages.append({
-                    "role": row["role"],
-                    "text": row["text"],
-                    "timestamp": row["timestamp"],
-                })
+                messages.append(
+                    {
+                        "role": row["role"],
+                        "text": row["text"],
+                        "timestamp": row["timestamp"],
+                    }
+                )
 
             return {
                 "id": chat_row["id"],
@@ -157,7 +166,10 @@ class AsyncHistoryManager:
         async with pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO client_chats (id, title, created_at, updated_at) VALUES ($1, $2, $3, $4)",
-                chat_id, title, now, now
+                chat_id,
+                title,
+                now,
+                now,
             )
         return chat_id
 
@@ -171,7 +183,10 @@ class AsyncHistoryManager:
                 # Добавляем сообщение
                 await conn.execute(
                     "INSERT INTO client_messages (chat_id, role, text, timestamp) VALUES ($1, $2, $3, $4)",
-                    chat_id, role, text, now
+                    chat_id,
+                    role,
+                    text,
+                    now,
                 )
 
                 # Обновляем время чата
@@ -236,11 +251,13 @@ class AsyncHistoryManager:
                 now,
             )
 
+
 class HistoryManager:
     """Синхронная обертка для обратной совместимости с десктопным клиентом."""
+
     def __init__(self, db_url=None):
         self._async_manager = AsyncHistoryManager(db_url)
-    
+
     def _run(self, coro):
         try:
             loop = asyncio.get_event_loop()
@@ -249,14 +266,33 @@ class HistoryManager:
             return loop.run_until_complete(coro)
         except RuntimeError:
             return asyncio.run(coro)
-            
-    def save_profile_data(self, profile): return self._run(self._async_manager.save_profile_data(profile))
-    def get_profile_data(self): return self._run(self._async_manager.get_profile_data())
-    def get_chats(self): return self._run(self._async_manager.get_chats())
-    def get_chat(self, chat_id): return self._run(self._async_manager.get_chat(chat_id))
-    def create_chat(self, title="Новый чат"): return self._run(self._async_manager.create_chat(title))
-    def add_message(self, chat_id, role, text): return self._run(self._async_manager.add_message(chat_id, role, text))
-    def delete_chat(self, chat_id): return self._run(self._async_manager.delete_chat(chat_id))
-    def clear_chat_messages(self, chat_id): return self._run(self._async_manager.clear_chat_messages(chat_id))
-    def clear_history(self): return self._run(self._async_manager.clear_history())
-    def save_ticket_draft(self, *args, **kwargs): return self._run(self._async_manager.save_ticket_draft(*args, **kwargs))
+
+    def save_profile_data(self, profile):
+        return self._run(self._async_manager.save_profile_data(profile))
+
+    def get_profile_data(self):
+        return self._run(self._async_manager.get_profile_data())
+
+    def get_chats(self):
+        return self._run(self._async_manager.get_chats())
+
+    def get_chat(self, chat_id):
+        return self._run(self._async_manager.get_chat(chat_id))
+
+    def create_chat(self, title="Новый чат"):
+        return self._run(self._async_manager.create_chat(title))
+
+    def add_message(self, chat_id, role, text):
+        return self._run(self._async_manager.add_message(chat_id, role, text))
+
+    def delete_chat(self, chat_id):
+        return self._run(self._async_manager.delete_chat(chat_id))
+
+    def clear_chat_messages(self, chat_id):
+        return self._run(self._async_manager.clear_chat_messages(chat_id))
+
+    def clear_history(self):
+        return self._run(self._async_manager.clear_history())
+
+    def save_ticket_draft(self, *args, **kwargs):
+        return self._run(self._async_manager.save_ticket_draft(*args, **kwargs))

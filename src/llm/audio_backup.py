@@ -187,7 +187,9 @@ class AudioLLMService:
         pcm_data = await self._convert_ogg_to_pcm(ogg_bytes)
         return await self.process_voice_from_pcm(pcm_data, system_prompt)
 
-    async def process_voice_from_pcm(self, pcm_data: bytes, system_prompt: Optional[str] = None, format: str = "ogg") -> tuple[bytes, Optional[str]]:
+    async def process_voice_from_pcm(
+        self, pcm_data: bytes, system_prompt: Optional[str] = None, format: str = "ogg"
+    ) -> tuple[bytes, Optional[str]]:
         """
         Обработка голосового сообщения из PCM данных.
         """
@@ -244,23 +246,27 @@ class AudioLLMService:
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 return await self._process_voice_with_tools_once(
-                    pcm_data, search_callback, system_prompt, format=format,
+                    pcm_data,
+                    search_callback,
+                    system_prompt,
+                    format=format,
                     contact_callback=contact_callback,
                 )
             except AudioError:
                 raise  # Логические ошибки (нет аудио и т.д.) — не повторяем
             except asyncio.TimeoutError as e:
                 last_error = e
-                logger.error(
-                    "Live API timeout на попытке %d/%d", attempt, _MAX_RETRIES
-                )
+                logger.error("Live API timeout на попытке %d/%d", attempt, _MAX_RETRIES)
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_DELAY)
             except _NETWORK_ERRORS as e:
                 last_error = e
                 logger.warning(
                     "Сетевая ошибка на попытке %d/%d: %s. Повтор через %.1f с...",
-                    attempt, _MAX_RETRIES, e, _RETRY_DELAY,
+                    attempt,
+                    _MAX_RETRIES,
+                    e,
+                    _RETRY_DELAY,
                 )
                 if attempt < _MAX_RETRIES:
                     await asyncio.sleep(_RETRY_DELAY)
@@ -269,9 +275,7 @@ class AudioLLMService:
                 logger.exception("Unexpected error in voice processing with tools")
                 raise AudioError(f"Voice processing with tools failed: {e}") from e
 
-        raise AudioError(
-            f"Voice processing with tools failed after {_MAX_RETRIES} attempts: {last_error}"
-        )
+        raise AudioError(f"Voice processing with tools failed after {_MAX_RETRIES} attempts: {last_error}")
 
     async def _process_voice_with_tools_once(
         self,
@@ -301,9 +305,7 @@ class AudioLLMService:
                 enable_affective_dialog=self.model_config.enable_affective_dialog,
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=self.model_config.voice_name
-                        )
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=self.model_config.voice_name)
                     ),
                     language_code="ru-RU",
                 ),
@@ -513,7 +515,7 @@ class AudioLLMService:
             except Exception:
                 # Если авто-определение сломается, пробуем как OGG (для Telegram)
                 audio = AudioSegment.from_file(io.BytesIO(ogg_bytes), format="ogg")
-                
+
             audio = (
                 audio.set_frame_rate(self.model_config.input_sample_rate)
                 .set_channels(self.model_config.channels)
@@ -555,9 +557,7 @@ class AudioLLMService:
             output_audio_transcription={} if self.model_config.enable_output_transcription else None,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=self.model_config.voice_name
-                    )
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=self.model_config.voice_name)
                 ),
                 language_code="ru-RU",
             ),

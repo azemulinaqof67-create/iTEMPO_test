@@ -10,10 +10,17 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
-from qdrant_client.models import Distance, PointStruct, VectorParams, SparseVectorParams, SparseIndexParams, SparseVector
+from qdrant_client.models import (
+    Distance,
+    PointStruct,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
+    VectorParams,
+)
 
 from src.core.clients import ClientManager, GeminiEmbedder
 from src.core.config import Config
@@ -237,9 +244,12 @@ class KeyPool:
             self._current_idx = self._slots.index(best)
             logger.debug(
                 "[R] Ротация: %s...%s → %s...%s (wait_old=%.1fs, util_new=%.0f%%)",
-                current.api_key[:4], current.api_key[-4:],
-                best.api_key[:4], best.api_key[-4:],
-                wait_current, util_best * 100,
+                current.api_key[:4],
+                current.api_key[-4:],
+                best.api_key[:4],
+                best.api_key[-4:],
+                wait_current,
+                util_best * 100,
             )
             return best
 
@@ -269,30 +279,37 @@ class EmbeddingService:
     """Управление векторной базой с пулом ключей."""
 
     # Сигналы суточного (RPD) исчерпания квоты.
-    _RPD_SIGNALS = ("PER_DAY", "PER-DAY", "DAILY_LIMIT", "DAILY-LIMIT", "DAY-LIMIT", "QUOTAID: EMBEDCONTENTREQUESTSPERDAY")
+    _RPD_SIGNALS = (
+        "PER_DAY",
+        "PER-DAY",
+        "DAILY_LIMIT",
+        "DAILY-LIMIT",
+        "DAY-LIMIT",
+        "QUOTAID: EMBEDCONTENTREQUESTSPERDAY",
+    )
     # Сигналы исчерпания токенов в минуту (TPM)
     _TPM_SIGNALS = ("TOKENS_PER_MINUTE", "TPM", "TOKENS PER MINUTE")
 
     def _extract_retry_delay(self, error_str: str) -> float:
         """
         Extract recommended retry delay from API error message.
-        
+
         Args:
             error_str: Complete error message from API
-            
+
         Returns:
             float: Retry delay in seconds, 0 if not found
         """
         import re
-        
+
         # Search for patterns like "RETRY IN 23S" or "RETRYDELAY": "22S"
         patterns = [
-            r'RETRY.*?IN\s+(\d+)S',
+            r"RETRY.*?IN\s+(\d+)S",
             r'"RETRYDELAY":\s*"(\d+)S"',
-            r'PLEASE RETRY IN (\d+\.\d+)S',
-            r'RETRY IN (\d+)S'
+            r"PLEASE RETRY IN (\d+\.\d+)S",
+            r"RETRY IN (\d+)S",
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, error_str, re.IGNORECASE)
             if match:
@@ -300,14 +317,14 @@ class EmbeddingService:
                     return float(match.group(1))
                 except (ValueError, IndexError):
                     continue
-        
+
         return 0.0
 
     def __init__(self, config: Config):
         self.config = config
         self.client_manager = ClientManager.get_instance(config)
         self._current_model_idx = 0
-        
+
         # FIX: Создаем пулы для ВСЕХ моделей заранее, чтобы сохранять состояние лимитеров
         self._pools: Dict[str, KeyPool] = {}
         models = config.embedding_models or [config.embedding_model]
@@ -322,7 +339,7 @@ class EmbeddingService:
 
         # FIX #2: Lock против race condition при параллельном async-доступе к слотам
         self._slot_lock: asyncio.Lock = asyncio.Lock()
-        # FIX #6: явный пул потоков. 
+        # FIX #6: явный пул потоков.
         # Увеличиваем до 10, чтобы даже при 1 ключе были свободные потоки для новых попыток,
         # если предыдущие "повисли" на сетевом таймауте.
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="emb_")
@@ -371,7 +388,9 @@ class EmbeddingService:
     def _estimate_tokens(self, texts: List[str]) -> int:
         return int(sum(len(t) / 2.0 for t in texts))
 
-    async def _encode_with_retry(self, loop: asyncio.AbstractEventLoop, texts: List[str], max_retries: int = 5) -> List[List[float]]:
+    async def _encode_with_retry(
+        self, loop: asyncio.AbstractEventLoop, texts: List[str], max_retries: int = 5
+    ) -> List[List[float]]:
         """
         Энкодинг с автоматической ротацией ключей, моделей (fallback) и ретраями.
         """
@@ -384,7 +403,7 @@ class EmbeddingService:
             # Пробуем текущую модель (или fallback, если переключились)
             current_model = models[m_idx]
             pool = self._pools.get(current_model)
-            
+
             if not pool or all(s.exhausted for s in pool._slots):
                 continue
 
@@ -393,23 +412,31 @@ class EmbeddingService:
                 async with self._slot_lock:
                     slot = pool.select(request_count, token_count)
                     wait = slot.limiter.wait_seconds(request_count, token_count)
-                    
+
                     if wait > 0:
-                        # Если текущая модель требует ожидания, а есть следующая (fallback) — 
+                        # Если текущая модель требует ожидания, а есть следующая (fallback) —
                         # попробуем сначала её, прежде чем спать здесь.
                         if m_idx < len(models) - 1:
                             next_model = models[m_idx + 1]
                             next_pool = self._pools.get(next_model)
                             # Если у следующей модели есть свободный слот — переключаемся
-                            if next_pool and any(not s.exhausted and s.limiter.wait_seconds(request_count, token_count) == 0 for s in next_pool._slots):
-                                break # Уходим к следующей модели (fallback)
-                        
+                            if next_pool and any(
+                                not s.exhausted and s.limiter.wait_seconds(request_count, token_count) == 0
+                                for s in next_pool._slots
+                            ):
+                                break  # Уходим к следующей модели (fallback)
+
                         # Если fallbacks нет или они тоже заняты — спим
                         if wait > 0.1:
-                            logger.info("  --- [%s...%s] %s, ожидание %.1fs...", 
-                                        slot.api_key[:4], slot.api_key[-4:], slot.limiter.stats(), wait)
+                            logger.info(
+                                "  --- [%s...%s] %s, ожидание %.1fs...",
+                                slot.api_key[:4],
+                                slot.api_key[-4:],
+                                slot.limiter.stats(),
+                                wait,
+                            )
                             await asyncio.sleep(wait)
-                    
+
                     slot.limiter.debit(request_count, token_count)
 
                 try:
@@ -420,25 +447,30 @@ class EmbeddingService:
                             self._executor,
                             lambda e=embedder: e.encode(texts, task_type="RETRIEVAL_DOCUMENT", normalize=True),
                         ),
-                        timeout=90.0
+                        timeout=90.0,
                     )
                     return res
                 except Exception as e:
                     err_str = str(e).upper()
                     if not err_str or err_str == "()":
                         err_str = repr(e).upper()
-                        
+
                     is_rate_error = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "QUOTA"])
 
                     if is_rate_error:
                         retry_delay = self._extract_retry_delay(err_str)
-                        
+
                         # Умное определение RPD (суточного лимита)
                         # Если в тексте есть "Day" или "Daily" и нет "Minute" — это суточный лимит.
-                        is_rpd = ("QUOTA" in err_str) and \
-                                 (any(x in err_str for x in ["DAY", "DAILY"]) or any(s in err_str for s in self._RPD_SIGNALS)) and \
-                                 ("MINUTE" not in err_str)
-                        
+                        is_rpd = (
+                            ("QUOTA" in err_str)
+                            and (
+                                any(x in err_str for x in ["DAY", "DAILY"])
+                                or any(s in err_str for s in self._RPD_SIGNALS)
+                            )
+                            and ("MINUTE" not in err_str)
+                        )
+
                         if is_rpd:
                             slot.mark_exhausted()
                             # Извлекаем лимит из сообщения для наглядности
@@ -446,19 +478,29 @@ class EmbeddingService:
                             if "LIMIT:" in err_str:
                                 try:
                                     limit_info = err_str.split("LIMIT:")[1].split()[0].replace(",", "")
-                                except: pass
-                                
-                            logger.warning("![RPD] Ключ %s...%s ИСЧЕРПАН СУТОЧНО (Limit: %s) для модели %s", 
-                                           slot.api_key[:4], slot.api_key[-4:], limit_info, current_model)
-                            logger.warning("![RPD] Ключ %s...%s исчерпан суточно для модели %s", 
-                                           slot.api_key[:4], slot.api_key[-4:], current_model)
-                            
+                                except:
+                                    pass
+
+                            logger.warning(
+                                "![RPD] Ключ %s...%s ИСЧЕРПАН СУТОЧНО (Limit: %s) для модели %s",
+                                slot.api_key[:4],
+                                slot.api_key[-4:],
+                                limit_info,
+                                current_model,
+                            )
+                            logger.warning(
+                                "![RPD] Ключ %s...%s исчерпан суточно для модели %s",
+                                slot.api_key[:4],
+                                slot.api_key[-4:],
+                                current_model,
+                            )
+
                             if all(s.exhausted for s in pool._slots):
                                 logger.warning("⚠️ Все ключи модели %s исчерпаны (RPD).", current_model)
                                 if m_idx < len(models) - 1:
-                                    break # К следующей модели (fallback)
+                                    break  # К следующей модели (fallback)
                                 else:
-                                    # Это была последняя модель. 
+                                    # Это была последняя модель.
                                     # Если мы в fallback (m_idx > 0), просто возвращаемся к началу (m_idx=0)
                                     # и ждем сброса лимита на основной модели.
                                     if m_idx > 0:
@@ -471,16 +513,17 @@ class EmbeddingService:
                         retry_delay = self._extract_retry_delay(err_str)
                         wait_time = retry_delay if retry_delay > 0 else 65.0
                         slot.limiter.force_wait(wait_time)
-                        
-                        logger.warning("⏳ RPM/TPM на %s...%s. Пауза %.0fs...", 
-                                       slot.api_key[:4], slot.api_key[-4:], wait_time)
-                        
+
+                        logger.warning(
+                            "⏳ RPM/TPM на %s...%s. Пауза %.0fs...", slot.api_key[:4], slot.api_key[-4:], wait_time
+                        )
+
                         # Пробуем fallback только если он ЖИВОЙ
                         if m_idx < len(models) - 1:
                             next_pool = self._pools.get(models[m_idx + 1])
                             if next_pool and any(not s.exhausted for s in next_pool._slots):
-                                break # Переходим к fallback
-                        
+                                break  # Переходим к fallback
+
                         # Иначе — остаемся на этой модели и пробуем снова (со сном в начале цикла)
                         continue
 
@@ -488,7 +531,7 @@ class EmbeddingService:
                         logger.error("❌ Ошибка %s: %s", current_model, err_str)
                         break
 
-                    wait_time = 3.0 * (2 ** attempt)
+                    wait_time = 3.0 * (2**attempt)
                     await asyncio.sleep(wait_time)
 
         # Если мы здесь, значит за один проход по всем моделям не удалось получить результат.
@@ -504,6 +547,7 @@ class EmbeddingService:
 
     async def _encode_sparse(self, loop, texts: List[str]) -> List[SparseVector]:
         """Генерация разреженных векторов с использованием fastembed и конвертация в SparseVector."""
+
         def _run():
             raw_embeddings = self.sparse_model.embed(texts)
             results = []
@@ -511,7 +555,7 @@ class EmbeddingService:
                 results.append(
                     SparseVector(
                         indices=emb.indices.tolist() if hasattr(emb.indices, "tolist") else list(emb.indices),
-                        values=emb.values.tolist() if hasattr(emb.values, "tolist") else list(emb.values)
+                        values=emb.values.tolist() if hasattr(emb.values, "tolist") else list(emb.values),
                     )
                 )
             return results
@@ -532,6 +576,7 @@ class EmbeddingService:
     async def _setup_indexes(self, client, loop):
         """Создание индексов для полей метаданных для оптимизации поиска."""
         from qdrant_client import models
+
         for field_name in ["doc_type", "company_tag"]:
             await self._qdrant_op(
                 loop,
@@ -539,7 +584,7 @@ class EmbeddingService:
                     collection_name=self.config.collection_name,
                     field_name=f,
                     field_schema=models.PayloadSchemaType.KEYWORD,
-                )
+                ),
             )
 
     async def update_database(self, chunks: List[Dict[str, Any]]):
@@ -552,7 +597,11 @@ class EmbeddingService:
             logger.info("[-] Удаление старой коллекции %s...", self.config.collection_name)
             client.delete_collection(self.config.collection_name)
 
-        logger.info("[+] Создание коллекции %s (size=%d, с разреженными векторами)...", self.config.collection_name, self.config.vector_size)
+        logger.info(
+            "[+] Создание коллекции %s (size=%d, с разреженными векторами)...",
+            self.config.collection_name,
+            self.config.vector_size,
+        )
         await self._qdrant_op(
             loop,
             lambda: client.create_collection(
@@ -573,7 +622,9 @@ class EmbeddingService:
             await self._upsert_chunks(batch, client, loop)
             elapsed = time.time() - start_time
             # Берем статистику из пула основной модели
-            main_model = self.config.embedding_models[0] if self.config.embedding_models else self.config.embedding_model
+            main_model = (
+                self.config.embedding_models[0] if self.config.embedding_models else self.config.embedding_model
+            )
             pool = self._pools.get(main_model)
             slot_stats = pool.current.limiter.stats() if pool else "N/A"
             print(f"  [{slot_stats}] Обработано {min(i + batch_size, total)}/{total} за {elapsed:.1f}s")
@@ -630,7 +681,9 @@ class EmbeddingService:
                 await self._upsert_chunks(batch, client, loop)
                 processed += len(batch)
                 elapsed = time.time() - start_time
-                main_model = self.config.embedding_models[0] if self.config.embedding_models else self.config.embedding_model
+                main_model = (
+                    self.config.embedding_models[0] if self.config.embedding_models else self.config.embedding_model
+                )
                 pool = self._pools.get(main_model)
                 slot_stats = pool.current.limiter.stats() if pool else "N/A"
                 print(f"  [{slot_stats}] {processed}/{total_chunks} за {elapsed:.1f}s")
@@ -655,13 +708,12 @@ class EmbeddingService:
         points = []
         for doc, dense_emb, sparse_emb in zip(valid_items, dense_embeddings, sparse_embeddings, strict=False):
             payload = {
-                k: v for k, v in doc.items() if k != "document_text" and isinstance(v, (str, int, float, bool, list, dict))
+                k: v
+                for k, v in doc.items()
+                if k != "document_text" and isinstance(v, (str, int, float, bool, list, dict))
             }
             # Передаем именованные векторы: "" (dense) и "sparse" (sparse)
-            vector_data = {
-                "": dense_emb if isinstance(dense_emb, list) else dense_emb.tolist(),
-                "sparse": sparse_emb
-            }
+            vector_data = {"": dense_emb if isinstance(dense_emb, list) else dense_emb.tolist(), "sparse": sparse_emb}
             points.append(PointStruct(id=str(uuid.uuid4()), vector=vector_data, payload=payload))
 
         await self._qdrant_op(loop, client.upsert, self.config.collection_name, points)

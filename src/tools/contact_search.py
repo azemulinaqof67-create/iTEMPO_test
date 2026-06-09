@@ -1,43 +1,46 @@
 import logging
-from typing import Optional, Any
+from typing import Optional
+
 from pydantic import BaseModel, Field
+
 from src.core.config import Config
 from src.rag.retrieval.contact_hybrid_search import ContactHybridSearch
 
 logger = logging.getLogger(__name__)
 
+
 class ContactSearchInput(BaseModel):
     """Схема входных аргументов для инструмента поиска контактов."""
+
     semantic_query: str = Field(
         default="",
-        description="Имя, фамилия, должность или отдел искомого лица. ВНИМАНИЕ: Оставьте это поле пустым (\"\"), если пользователь просит вывести просто список или всех сотрудников компании/отдела, чтобы избежать искажения сортировки."
+        description='Имя, фамилия, должность или отдел искомого лица. ВНИМАНИЕ: Оставьте это поле пустым (""), если пользователь просит вывести просто список или всех сотрудников компании/отдела, чтобы избежать искажения сортировки.',
     )
     company_filter: Optional[str] = Field(
-        default=None,
-        description="Название компании для фильтрации контактов (например, 'КМК', 'ЗТЭО', 'ИТЗ')"
+        default=None, description="Название компании для фильтрации контактов (например, 'КМК', 'ЗТЭО', 'ИТЗ')"
     )
     exact_phone: Optional[str] = Field(
-        default=None,
-        description="Точный или частичный номер телефона для поиска владельца контакта"
+        default=None, description="Точный или частичный номер телефона для поиска владельца контакта"
     )
     limit: int = Field(
         default=10,
-        description="Максимальное количество возвращаемых контактов. Увеличьте это значение (вплоть до 50), если пользователь запрашивает список сотрудников или ищет 'других'."
+        description="Максимальное количество возвращаемых контактов. Увеличьте это значение (вплоть до 50), если пользователь запрашивает список сотрудников или ищет 'других'.",
     )
+
 
 class ContactSearchTool:
     """Инструмент для поиска контактов в Qdrant с использованием гибридного поиска (Dense + Sparse/BM25)."""
-    
+
     def __init__(self, config: Optional[Config] = None, db_path: Optional[str] = None):
         self.config = config or Config.from_env()
         self.search_service = ContactHybridSearch(self.config)
 
     async def search(
-        self, 
-        semantic_query: str = "", 
-        company_filter: Optional[str] = None, 
+        self,
+        semantic_query: str = "",
+        company_filter: Optional[str] = None,
         exact_phone: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> str:
         """
         Выполняет поиск контактов в Qdrant.
@@ -51,7 +54,7 @@ class ContactSearchTool:
                 semantic_query=semantic_query,
                 company_filter=company_filter,
                 exact_phone=exact_phone,
-                limit=kwargs.get("limit", 10)
+                limit=kwargs.get("limit", 10),
             )
         except Exception as e:
             logger.error(f"Validation error in ContactSearchTool: {e}")
@@ -72,7 +75,7 @@ class ContactSearchTool:
                 semantic_query=params_validated.semantic_query,
                 company_filter=params_validated.company_filter,
                 exact_phone=params_validated.exact_phone,
-                limit=params_validated.limit
+                limit=params_validated.limit,
             )
 
             if not rows:
@@ -81,7 +84,9 @@ class ContactSearchTool:
 
             formatted_results = []
             for i, row in enumerate(rows, 1):
-                logger.info(f"[QDRANT SEARCH TOOL] Match found: {row['full_name']} | Score: {row.get('score', 0.0):.3f}")
+                logger.info(
+                    f"[QDRANT SEARCH TOOL] Match found: {row['full_name']} | Score: {row.get('score', 0.0):.3f}"
+                )
                 email_str = f", Email: {row['email']}" if row.get("email") else ""
                 formatted_results.append(
                     f"{i}. {row['full_name'] or '—'} — {row['position'] or '—'}\n"

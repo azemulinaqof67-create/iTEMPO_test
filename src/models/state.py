@@ -1,37 +1,39 @@
-import operator
-from pydantic import BaseModel, Field
-from typing import Literal, Optional, List, Annotated, TypedDict
+from typing import Annotated, List, Literal, Optional, TypedDict
+
 from langgraph.graph.message import add_messages
+from pydantic import BaseModel, Field
+
 
 class QueryIntent(BaseModel):
     """Схема классификации намерения пользователя."""
-    intent: Literal["contact_search", "location_search", "hr_policy", "general_info", "emergency", "weather", "personal"] = Field(
+
+    intent: Literal[
+        "contact_search", "location_search", "hr_policy", "general_info", "emergency", "weather", "personal"
+    ] = Field(
         description="Категория запроса пользователя. 'emergency' — для ЧС, травм и медпунктов. 'weather' — для прогноза погоды. 'personal' — вопросы пользователя о себе или об истории диалога."
     )
     is_topic_shift: bool = Field(
         default=False,
-        description="Установи в True, если пользователь резко сменил тему разговора и предыдущий контекст больше не применим."
+        description="Установи в True, если пользователь резко сменил тему разговора и предыдущий контекст больше не применим.",
     )
     target_company: Optional[str] = Field(
-        default=None, 
-        description="Название компании или завода (например, 'КМК', 'ЗТЭО', 'ИТЗ', 'АЙТИ')."
+        default=None, description="Название компании или завода (например, 'КМК', 'ЗТЭО', 'ИТЗ', 'АЙТИ')."
     )
     target_person: Optional[str] = Field(
-        default=None, 
-        description="ФИО, должность или название отдела, если это поиск контактов."
+        default=None, description="ФИО, должность или название отдела, если это поиск контактов."
     )
     exact_phone: Optional[str] = Field(
         default=None,
-        description="Точный номер телефона (4 цифры или более), если пользователь ищет контакт по номеру телефона."
+        description="Точный номер телефона (4 цифры или более), если пользователь ищет контакт по номеру телефона.",
     )
     target_location: Optional[str] = Field(
-        default=None,
-        description="Название города для поиска погоды (например, 'Набережные Челны')."
+        default=None, description="Название города для поиска погоды (например, 'Набережные Челны')."
     )
     requires_rag: bool = Field(
         default=False,
-        description="Установи в True, если запрос пользователя требует обращения к текстовым документам/базе знаний (например, поиск руководства, графиков работы, адресов, регламентов, отпусков, обязанностей сотрудников или любой дополнительной текстовой информации, выходящей за рамки простого поиска контакта/телефона/почты)."
+        description="Установи в True, если запрос пользователя требует обращения к текстовым документам/базе знаний (например, поиск руководства, графиков работы, адресов, регламентов, отпусков, обязанностей сотрудников или любой дополнительной текстовой информации, выходящей за рамки простого поиска контакта/телефона/почты).",
     )
+
 
 def clearable_add(left: Optional[List[str]], right: Optional[List[str]]) -> List[str]:
     """Умный редьюсер: склеивает результаты, но если видит сигнал __CLEAR__, полностью очищает список."""
@@ -39,19 +41,21 @@ def clearable_add(left: Optional[List[str]], right: Optional[List[str]]) -> List
         return left if left is not None else []
     if right and right[0] == "__CLEAR__":
         return []
-    
+
     res = left.copy() if left is not None else []
     res.extend([r for r in right if r != "__CLEAR__"])
     return res
 
+
 class AgentState(TypedDict):
     """Состояние графа LangGraph с поддержкой памяти."""
+
     messages: Annotated[list, add_messages]
     query: str
-    user_company: Optional[str] # Выбранное пользователем предприятие
-    user_name: Optional[str]    # Имя пользователя, если он представился в диалоге
+    user_company: Optional[str]  # Выбранное пользователем предприятие
+    user_name: Optional[str]  # Имя пользователя, если он представился в диалоге
     intent: Optional[QueryIntent]
-    extracted_context: Optional[str] # Извлеченный контекст из промежуточных шагов (например, отдел сотрудника)
+    extracted_context: Optional[str]  # Извлеченный контекст из промежуточных шагов (например, отдел сотрудника)
     search_results: Annotated[List[str], clearable_add]
     answer: Optional[str]
-    conversation_summary: Optional[str] # Краткое резюме истории диалога для LLM
+    conversation_summary: Optional[str]  # Краткое резюме истории диалога для LLM

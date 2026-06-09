@@ -21,7 +21,9 @@ class RAGFusion:
         self.llm = TextLLMService(config)
 
     async def search_with_fusion(
-        self, query: str, limit: int = 10,
+        self,
+        query: str,
+        limit: int = 10,
         company_id: Optional[str] = None,
         qdrant_filter: Optional[Any] = None,
     ) -> List[Dict]:
@@ -36,7 +38,8 @@ class RAGFusion:
         # Выполняем все поисковые запросы параллельно, с одним фильтром для всех
         tasks = [
             self.search.search(
-                q, limit=self.config.fusion_fetch_limit,
+                q,
+                limit=self.config.fusion_fetch_limit,
                 company_id=company_id,
                 qdrant_filter=qdrant_filter,
             )

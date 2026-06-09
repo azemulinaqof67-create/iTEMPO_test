@@ -33,22 +33,20 @@ class ChatHistoryManager:
     async def get_pool(self) -> asyncpg.Pool:
         """Получить пул соединений (ленивая инициализация для текущего event loop)."""
         loop = asyncio.get_running_loop()
-        
+
         if loop in self._pools and loop in self._initialized_loops:
             return self._pools[loop]
-            
+
         if loop not in self._locks:
             self._locks[loop] = asyncio.Lock()
-            
+
         async with self._locks[loop]:
             # Двойная проверка
             if loop in self._pools and loop in self._initialized_loops:
                 return self._pools[loop]
-                
+
             pool = await asyncpg.create_pool(
-                self.db_url,
-                min_size=self.config.db_pool_min_size,
-                max_size=self.config.db_pool_max_size
+                self.db_url, min_size=self.config.db_pool_min_size, max_size=self.config.db_pool_max_size
             )
             self._pools[loop] = pool
             # Инициализируем БД только один раз на весь запуск (но пул создаем для каждого loop)
@@ -56,7 +54,7 @@ class ChatHistoryManager:
             # Но get_pool возвращает пул. Мы временно помечаем как инициализированный для текущего loop,
             # чтобы _init_database мог делать запросы без бесконечной рекурсии.
             self._initialized_loops.add(loop)
-            
+
             try:
                 # Инициализация схемы и таблиц
                 async with pool.acquire() as conn:
@@ -100,7 +98,7 @@ class ChatHistoryManager:
                 # Если произошла ошибка, сбросим флаг
                 self._initialized_loops.discard(loop)
                 raise e
-                
+
             return pool
 
     async def close(self):
@@ -131,7 +129,12 @@ class ChatHistoryManager:
                 INSERT INTO chat_messages (session_id, platform, role, message, timestamp, metadata)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 """,
-                session_id, platform, role, message, timestamp, metadata_str
+                session_id,
+                platform,
+                role,
+                message,
+                timestamp,
+                metadata_str,
             )
         logger.debug(f"Message saved for session {session_id}, role: {role}")
 
@@ -149,18 +152,19 @@ class ChatHistoryManager:
                 ORDER BY timestamp DESC
                 LIMIT $2
                 """,
-                session_id, max_messages
+                session_id,
+                max_messages,
             )
 
         messages = []
         for row in reversed(rows):
-            metadata_str = row['metadata']
+            metadata_str = row["metadata"]
             metadata = json.loads(metadata_str) if metadata_str else {}
             messages.append(
                 {
-                    "role": row['role'],
-                    "content": row['message'],
-                    "timestamp": row['timestamp'],
+                    "role": row["role"],
+                    "content": row["message"],
+                    "timestamp": row["timestamp"],
                     "metadata": metadata,
                 }
             )
@@ -171,19 +175,13 @@ class ChatHistoryManager:
     async def get_message_count(self, session_id: str) -> int:
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            count = await conn.fetchval(
-                "SELECT COUNT(*) FROM chat_messages WHERE session_id = $1",
-                session_id
-            )
+            count = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE session_id = $1", session_id)
             return count or 0
 
     async def get_user_company(self, user_id: str) -> Optional[str]:
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            company_id = await conn.fetchval(
-                "SELECT company_id FROM users WHERE user_id = $1",
-                str(user_id)
-            )
+            company_id = await conn.fetchval("SELECT company_id FROM users WHERE user_id = $1", str(user_id))
             logger.debug(f"DB: Чтение компании для {user_id} -> {company_id}")
             return company_id
 
@@ -197,7 +195,8 @@ class ChatHistoryManager:
                 ON CONFLICT (user_id) 
                 DO UPDATE SET company_id = EXCLUDED.company_id
                 """,
-                str(user_id), company_id
+                str(user_id),
+                company_id,
             )
         logger.info(f"DB: Компания для {user_id} установлена в {company_id}")
 
@@ -205,10 +204,7 @@ class ChatHistoryManager:
         """True = голосовые ответы включены (по умолчанию), False = отвечает текстом."""
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            value = await conn.fetchval(
-                "SELECT voice_mode FROM users WHERE user_id = $1",
-                str(user_id)
-            )
+            value = await conn.fetchval("SELECT voice_mode FROM users WHERE user_id = $1", str(user_id))
         # None = записи нет → используем значение по умолчанию (True)
         return bool(value) if value is not None else True
 
@@ -223,7 +219,8 @@ class ChatHistoryManager:
                 ON CONFLICT (user_id)
                 DO UPDATE SET voice_mode = EXCLUDED.voice_mode
                 """,
-                str(user_id), enabled
+                str(user_id),
+                enabled,
             )
         logger.info(f"DB: voice_mode для {user_id} установлен в {enabled}")
 
@@ -235,11 +232,10 @@ class ChatHistoryManager:
         pool = await self.get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT summary, messages_count FROM chat_summaries WHERE session_id = $1",
-                session_id
+                "SELECT summary, messages_count FROM chat_summaries WHERE session_id = $1", session_id
             )
             if row:
-                return {"summary": row['summary'], "messages_count": row['messages_count']}
+                return {"summary": row["summary"], "messages_count": row["messages_count"]}
             return None
 
     async def save_summary(self, session_id: str, summary: str, messages_count: int):
@@ -257,7 +253,10 @@ class ChatHistoryManager:
                     messages_count = EXCLUDED.messages_count, 
                     last_updated = EXCLUDED.last_updated
                 """,
-                session_id, summary, messages_count, timestamp
+                session_id,
+                summary,
+                messages_count,
+                timestamp,
             )
         logger.info(f"Summary saved for session {session_id}, {messages_count} messages summarized")
 
@@ -267,10 +266,10 @@ class ChatHistoryManager:
 
         stats = await self.get_summary_stats(session_id)
         summarized_count = stats["messages_count"] if stats else 0
-        
+
         message_count = await self.get_message_count(session_id)
         new_messages = message_count - summarized_count
-        
+
         return new_messages > self.config.summarization_threshold
 
     async def get_old_messages_for_summarization(
@@ -294,18 +293,20 @@ class ChatHistoryManager:
                 ORDER BY timestamp ASC
                 LIMIT $2 OFFSET $3
                 """,
-                session_id, limit, offset
+                session_id,
+                limit,
+                offset,
             )
 
         messages = []
         for row in rows:
-            metadata_str = row['metadata']
+            metadata_str = row["metadata"]
             metadata = json.loads(metadata_str) if metadata_str else {}
             messages.append(
                 {
-                    "role": row['role'],
-                    "content": row['message'],
-                    "timestamp": row['timestamp'],
+                    "role": row["role"],
+                    "content": row["message"],
+                    "timestamp": row["timestamp"],
                     "metadata": metadata,
                 }
             )
@@ -355,7 +356,7 @@ class ChatHistoryManager:
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_seen DOUBLE PRECISION;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
             """)
-            
+
             # 2. Таблица admin_users
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS admin_users (
@@ -384,26 +385,46 @@ class ChatHistoryManager:
             if not admin_exists:
                 default_password = self.config.admin_password
                 pwd_hash = hash_password(default_password)
-                all_permissions = json.dumps([
-                    "view_stats", "view_logs", "manage_bot_users", "view_documents", 
-                    "add_documents", "edit_documents", "delete_documents", 
-                    "apply_changes", "send_broadcast", "manage_api_keys"
-                ])
-                await conn.execute("""
+                all_permissions = json.dumps(
+                    [
+                        "view_stats",
+                        "view_logs",
+                        "manage_bot_users",
+                        "view_documents",
+                        "add_documents",
+                        "edit_documents",
+                        "delete_documents",
+                        "apply_changes",
+                        "send_broadcast",
+                        "manage_api_keys",
+                    ]
+                )
+                await conn.execute(
+                    """
                     INSERT INTO admin_users (username, password_hash, role, company_id, permissions)
                     VALUES ($1, $2, $3, $4, $5)
-                """, 'admin', pwd_hash, 'superadmin', 'all', all_permissions)
+                """,
+                    "admin",
+                    pwd_hash,
+                    "superadmin",
+                    "all",
+                    all_permissions,
+                )
                 logger.info("Default superadmin 'admin' created in database.")
 
     async def get_admin_user_by_username(self, username: str) -> Optional[Dict]:
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("""
+            row = await conn.fetchrow(
+                """
                 SELECT id, username, password_hash, role, company_id, permissions
                 FROM admin_users
                 WHERE username = $1
-            """, username)
+            """,
+                username,
+            )
             if row:
+
                 def parse_company_ids(val: Optional[str]) -> List[str]:
                     if not val:
                         return []
@@ -415,7 +436,7 @@ class ChatHistoryManager:
                         except Exception:
                             return [val]
                     return [val]
-                
+
                 c_ids = parse_company_ids(row["company_id"])
                 return {
                     "id": row["id"],
@@ -436,7 +457,7 @@ class ChatHistoryManager:
                 FROM admin_users
                 ORDER BY username ASC
             """)
-        
+
         def parse_company_ids(val: Optional[str]) -> List[str]:
             if not val:
                 return []
@@ -452,43 +473,77 @@ class ChatHistoryManager:
         result = []
         for row in rows:
             c_ids = parse_company_ids(row["company_id"])
-            result.append({
-                "id": row["id"],
-                "username": row["username"],
-                "role": row["role"],
-                "company_id": row["company_id"],
-                "company_ids": c_ids,
-                "permissions": json.loads(row["permissions"]),
-            })
+            result.append(
+                {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "role": row["role"],
+                    "company_id": row["company_id"],
+                    "company_ids": c_ids,
+                    "permissions": json.loads(row["permissions"]),
+                }
+            )
         return result
 
-    async def create_admin_user(self, username: str, password_hash: str, role: str, company_id: Optional[str], permissions: List[str]) -> int:
+    async def create_admin_user(
+        self, username: str, password_hash: str, role: str, company_id: Optional[str], permissions: List[str]
+    ) -> int:
         pool = await self.get_pool()
         permissions_str = json.dumps(permissions)
         async with pool.acquire() as conn:
-            val = await conn.fetchval("""
+            val = await conn.fetchval(
+                """
                 INSERT INTO admin_users (username, password_hash, role, company_id, permissions)
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING id
-            """, username, password_hash, role, company_id, permissions_str)
+            """,
+                username,
+                password_hash,
+                role,
+                company_id,
+                permissions_str,
+            )
             return val
 
-    async def update_admin_user(self, user_id: int, username: str, password_hash: Optional[str], role: str, company_id: Optional[str], permissions: List[str]):
+    async def update_admin_user(
+        self,
+        user_id: int,
+        username: str,
+        password_hash: Optional[str],
+        role: str,
+        company_id: Optional[str],
+        permissions: List[str],
+    ):
         pool = await self.get_pool()
         permissions_str = json.dumps(permissions)
         async with pool.acquire() as conn:
             if password_hash:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE admin_users
                     SET username = $2, password_hash = $3, role = $4, company_id = $5, permissions = $6
                     WHERE id = $1
-                """, user_id, username, password_hash, role, company_id, permissions_str)
+                """,
+                    user_id,
+                    username,
+                    password_hash,
+                    role,
+                    company_id,
+                    permissions_str,
+                )
             else:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE admin_users
                     SET username = $2, role = $3, company_id = $4, permissions = $5
                     WHERE id = $1
-                """, user_id, username, role, company_id, permissions_str)
+                """,
+                    user_id,
+                    username,
+                    role,
+                    company_id,
+                    permissions_str,
+                )
 
     async def delete_admin_user(self, user_id: int):
         pool = await self.get_pool()
@@ -500,7 +555,8 @@ class ChatHistoryManager:
         pool = await self.get_pool()
         now = time.time()
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO users (user_id, last_activity, platform, first_seen, username)
                 VALUES ($1, $2, $3, $2, $4)
                 ON CONFLICT (user_id)
@@ -509,16 +565,24 @@ class ChatHistoryManager:
                     platform = COALESCE(EXCLUDED.platform, users.platform),
                     first_seen = COALESCE(users.first_seen, EXCLUDED.first_seen),
                     username = COALESCE(EXCLUDED.username, users.username)
-            """, str(user_id), now, platform, username)
+            """,
+                str(user_id),
+                now,
+                platform,
+                username,
+            )
 
-    async def get_all_users(self, limit: int = 500, offset: int = 0, company_ids: Optional[List[str]] = None) -> List[Dict]:
+    async def get_all_users(
+        self, limit: int = 500, offset: int = 0, company_ids: Optional[List[str]] = None
+    ) -> List[Dict]:
         """Список всех пользователей для панели администратора."""
         pool = await self.get_pool()
-        if company_ids and 'all' in company_ids:
+        if company_ids and "all" in company_ids:
             company_ids = None
         async with pool.acquire() as conn:
             if company_ids:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT
                         user_id,
                         company_id,
@@ -532,9 +596,14 @@ class ChatHistoryManager:
                     WHERE company_id = ANY($3::text[])
                     ORDER BY COALESCE(last_activity, 0) DESC
                     LIMIT $1 OFFSET $2
-                """, limit, offset, company_ids)
+                """,
+                    limit,
+                    offset,
+                    company_ids,
+                )
             else:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT
                         user_id,
                         company_id,
@@ -547,59 +616,71 @@ class ChatHistoryManager:
                     FROM users
                     ORDER BY COALESCE(last_activity, 0) DESC
                     LIMIT $1 OFFSET $2
-                """, limit, offset)
+                """,
+                    limit,
+                    offset,
+                )
         result = []
         for row in rows:
-            result.append({
-                "user_id": row["user_id"],
-                "company_id": row["company_id"],
-                "voice_mode": row["voice_mode"],
-                "is_blocked": row["is_blocked"],
-                "last_activity": row["last_activity"],
-                "platform": row["platform"],
-                "first_seen": row["first_seen"],
-                "username": row["username"],
-            })
+            result.append(
+                {
+                    "user_id": row["user_id"],
+                    "company_id": row["company_id"],
+                    "voice_mode": row["voice_mode"],
+                    "is_blocked": row["is_blocked"],
+                    "last_activity": row["last_activity"],
+                    "platform": row["platform"],
+                    "first_seen": row["first_seen"],
+                    "username": row["username"],
+                }
+            )
         return result
 
     async def get_users_count(self, company_ids: Optional[List[str]] = None) -> int:
         """Общее количество пользователей."""
         pool = await self.get_pool()
-        if company_ids and 'all' in company_ids:
+        if company_ids and "all" in company_ids:
             company_ids = None
         async with pool.acquire() as conn:
             if company_ids:
-                return await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids) or 0
+                return (
+                    await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids)
+                    or 0
+                )
             return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
 
     async def block_user(self, user_id: str):
         """Заблокировать пользователя."""
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO users (user_id, is_blocked)
                 VALUES ($1, TRUE)
                 ON CONFLICT (user_id)
                 DO UPDATE SET is_blocked = TRUE
-            """, str(user_id))
+            """,
+                str(user_id),
+            )
         logger.info(f"User {user_id} blocked")
 
     async def unblock_user(self, user_id: str):
         """Разблокировать пользователя."""
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 UPDATE users SET is_blocked = FALSE WHERE user_id = $1
-            """, str(user_id))
+            """,
+                str(user_id),
+            )
         logger.info(f"User {user_id} unblocked")
 
     async def is_user_blocked(self, user_id: str) -> bool:
         """Проверить, заблокирован ли пользователь."""
         pool = await self.get_pool()
         async with pool.acquire() as conn:
-            val = await conn.fetchval(
-                "SELECT is_blocked FROM users WHERE user_id = $1", str(user_id)
-            )
+            val = await conn.fetchval("SELECT is_blocked FROM users WHERE user_id = $1", str(user_id))
         return bool(val) if val is not None else False
 
     async def get_stats(self, company_ids: Optional[List[str]] = None) -> Dict:
@@ -609,38 +690,69 @@ class ChatHistoryManager:
         day_ago = now - 86400
         week_ago = now - 86400 * 7
 
-        if company_ids and 'all' in company_ids:
+        if company_ids and "all" in company_ids:
             company_ids = None
 
         async with pool.acquire() as conn:
             if company_ids:
-                total_messages = await conn.fetchval("""
+                total_messages = (
+                    await conn.fetchval(
+                        """
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
                     WHERE u.company_id = ANY($1::text[])
-                """, company_ids) or 0
-                
-                today_messages = await conn.fetchval("""
+                """,
+                        company_ids,
+                    )
+                    or 0
+                )
+
+                today_messages = (
+                    await conn.fetchval(
+                        """
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
                     WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
-                """, day_ago, company_ids) or 0
-                
-                week_messages = await conn.fetchval("""
+                """,
+                        day_ago,
+                        company_ids,
+                    )
+                    or 0
+                )
+
+                week_messages = (
+                    await conn.fetchval(
+                        """
                     SELECT COUNT(*) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
                     WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
-                """, week_ago, company_ids) or 0
-                
-                total_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids) or 0
-                
-                active_today = await conn.fetchval("""
+                """,
+                        week_ago,
+                        company_ids,
+                    )
+                    or 0
+                )
+
+                total_users = (
+                    await conn.fetchval("SELECT COUNT(*) FROM users WHERE company_id = ANY($1::text[])", company_ids)
+                    or 0
+                )
+
+                active_today = (
+                    await conn.fetchval(
+                        """
                     SELECT COUNT(DISTINCT m.session_id) FROM chat_messages m
                     LEFT JOIN users u ON m.session_id = u.user_id
                     WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
-                """, day_ago, company_ids) or 0
+                """,
+                        day_ago,
+                        company_ids,
+                    )
+                    or 0
+                )
 
-                hourly_rows = await conn.fetch("""
+                hourly_rows = await conn.fetch(
+                    """
                     SELECT
                         EXTRACT(EPOCH FROM to_timestamp(m.timestamp) AT TIME ZONE 'UTC'
                             - INTERVAL '1 second' * (EXTRACT(EPOCH FROM to_timestamp(m.timestamp) AT TIME ZONE 'UTC')::bigint % 3600)) AS hour_ts,
@@ -650,9 +762,13 @@ class ChatHistoryManager:
                     WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
                     GROUP BY hour_ts
                     ORDER BY hour_ts
-                """, day_ago, company_ids)
+                """,
+                    day_ago,
+                    company_ids,
+                )
 
-                daily_rows = await conn.fetch("""
+                daily_rows = await conn.fetch(
+                    """
                     SELECT
                         DATE(to_timestamp(m.timestamp)) as day,
                         COUNT(*) as cnt
@@ -661,22 +777,28 @@ class ChatHistoryManager:
                     WHERE m.timestamp > $1 AND u.company_id = ANY($2::text[])
                     GROUP BY day
                     ORDER BY day
-                """, week_ago, company_ids)
+                """,
+                    week_ago,
+                    company_ids,
+                )
             else:
                 total_messages = await conn.fetchval("SELECT COUNT(*) FROM chat_messages") or 0
-                today_messages = await conn.fetchval(
-                    "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", day_ago
-                ) or 0
-                week_messages = await conn.fetchval(
-                    "SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", week_ago
-                ) or 0
+                today_messages = (
+                    await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", day_ago) or 0
+                )
+                week_messages = (
+                    await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE timestamp > $1", week_ago) or 0
+                )
                 total_users = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
-                active_today = await conn.fetchval(
-                    "SELECT COUNT(DISTINCT session_id) FROM chat_messages WHERE timestamp > $1",
-                    day_ago
-                ) or 0
+                active_today = (
+                    await conn.fetchval(
+                        "SELECT COUNT(DISTINCT session_id) FROM chat_messages WHERE timestamp > $1", day_ago
+                    )
+                    or 0
+                )
 
-                hourly_rows = await conn.fetch("""
+                hourly_rows = await conn.fetch(
+                    """
                     SELECT
                         EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC'
                             - INTERVAL '1 second' * (EXTRACT(EPOCH FROM to_timestamp(timestamp) AT TIME ZONE 'UTC')::bigint % 3600)) AS hour_ts,
@@ -685,9 +807,12 @@ class ChatHistoryManager:
                     WHERE timestamp > $1
                     GROUP BY hour_ts
                     ORDER BY hour_ts
-                """, day_ago)
+                """,
+                    day_ago,
+                )
 
-                daily_rows = await conn.fetch("""
+                daily_rows = await conn.fetch(
+                    """
                     SELECT
                         DATE(to_timestamp(timestamp)) as day,
                         COUNT(*) as cnt
@@ -695,7 +820,9 @@ class ChatHistoryManager:
                     WHERE timestamp > $1
                     GROUP BY day
                     ORDER BY day
-                """, week_ago)
+                """,
+                    week_ago,
+                )
 
         return {
             "total_messages": total_messages,
@@ -744,7 +871,7 @@ class ChatHistoryManager:
             conditions.append(f"m.timestamp <= ${idx}")
             params.append(date_to)
             idx += 1
-        if company_ids and 'all' not in company_ids:
+        if company_ids and "all" not in company_ids:
             conditions.append(f"m.session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
             params.append(company_ids)
             idx += 1
@@ -753,27 +880,32 @@ class ChatHistoryManager:
         params.extend([limit, offset])
 
         async with pool.acquire() as conn:
-            rows = await conn.fetch(f"""
+            rows = await conn.fetch(
+                f"""
                 SELECT m.session_id, m.platform, m.role, m.message, m.timestamp, m.metadata, u.username
                 FROM chat_messages m
                 LEFT JOIN users u ON m.session_id = u.user_id
                 {where}
                 ORDER BY m.timestamp DESC
                 LIMIT ${idx} OFFSET ${idx + 1}
-            """, *params)
+            """,
+                *params,
+            )
 
         result = []
         for row in rows:
             meta = json.loads(row["metadata"]) if row["metadata"] else {}
-            result.append({
-                "session_id": row["session_id"],
-                "platform": row["platform"],
-                "role": row["role"],
-                "message": row["message"],
-                "timestamp": row["timestamp"],
-                "metadata": meta,
-                "username": row["username"],
-            })
+            result.append(
+                {
+                    "session_id": row["session_id"],
+                    "platform": row["platform"],
+                    "role": row["role"],
+                    "message": row["message"],
+                    "timestamp": row["timestamp"],
+                    "metadata": meta,
+                    "username": row["username"],
+                }
+            )
         return result
 
     async def get_logs_count(
@@ -801,16 +933,14 @@ class ChatHistoryManager:
             conditions.append(f"m.message ILIKE ${idx}")
             params.append(f"%{search}%")
             idx += 1
-        if company_ids and 'all' not in company_ids:
+        if company_ids and "all" not in company_ids:
             conditions.append(f"m.session_id IN (SELECT user_id FROM users WHERE company_id = ANY(${idx}::text[]))")
             params.append(company_ids)
             idx += 1
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         async with pool.acquire() as conn:
-            return await conn.fetchval(
-                f"SELECT COUNT(*) FROM chat_messages m {where}", *params
-            ) or 0
+            return await conn.fetchval(f"SELECT COUNT(*) FROM chat_messages m {where}", *params) or 0
 
     async def log_admin_action(self, admin_username: str, action: str, details: str = ""):
         """Логирование действия администратора в аудит лог."""
@@ -822,7 +952,10 @@ class ChatHistoryManager:
                 INSERT INTO admin_audit_logs (admin_username, action, details, timestamp)
                 VALUES ($1, $2, $3, $4)
                 """,
-                admin_username, action, details, timestamp
+                admin_username,
+                action,
+                details,
+                timestamp,
             )
         logger.info(f"Audit Log: {admin_username} - {action} - {details}")
 
@@ -836,17 +969,21 @@ class ChatHistoryManager:
                 FROM admin_audit_logs
                 ORDER BY timestamp DESC
                 LIMIT $1 OFFSET $2
-                """, limit, offset
+                """,
+                limit,
+                offset,
             )
         result = []
         for row in rows:
-            result.append({
-                "id": row["id"],
-                "admin_username": row["admin_username"],
-                "action": row["action"],
-                "details": row["details"],
-                "timestamp": row["timestamp"]
-            })
+            result.append(
+                {
+                    "id": row["id"],
+                    "admin_username": row["admin_username"],
+                    "action": row["action"],
+                    "details": row["details"],
+                    "timestamp": row["timestamp"],
+                }
+            )
         return result
 
     def truncate_history_by_tokens(self, history: List[Dict[str, str]], max_tokens: int) -> List[Dict[str, str]]:
@@ -888,22 +1025,24 @@ class ChatHistoryManager:
 
 # ─── Хелперы авторизации ───────────────────────────────────────────────────
 
+
 def hash_password(password: str) -> str:
     import hashlib
     import os
+
     salt = os.urandom(16)
-    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000)
     return salt.hex() + ":" + key.hex()
 
 
 def verify_password(stored_password_hash: str, provided_password: str) -> bool:
     import hashlib
+
     try:
         salt_hex, key_hex = stored_password_hash.split(":", 1)
         salt = bytes.fromhex(salt_hex)
         key = bytes.fromhex(key_hex)
-        new_key = hashlib.pbkdf2_hmac('sha256', provided_password.encode('utf-8'), salt, 100000)
+        new_key = hashlib.pbkdf2_hmac("sha256", provided_password.encode("utf-8"), salt, 100000)
         return new_key == key
     except Exception:
         return False
-

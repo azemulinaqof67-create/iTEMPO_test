@@ -1,21 +1,23 @@
 import logging
+
 from src.core.config import Config
-from src.models.state import QueryIntent
 from src.llm.text import TextLLMService
+from src.models.state import QueryIntent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class IntentRouter:
     """
     LLM Роутер для определения намерения пользователя и извлечения сущностей.
     Использует TextLLMService для надежности и Structured Outputs для формата.
     """
-    
+
     def __init__(self, config: Config):
         self.config = config
         self.llm_service = TextLLMService(config)
-        
+
     async def classify_query(self, query: str) -> QueryIntent:
         """
         Классифицирует запрос пользователя.
@@ -68,12 +70,10 @@ class IntentRouter:
 
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ: {query}
 """
-        
+
         try:
             return await self.llm_service.generate_structured(
-                prompt=prompt,
-                response_schema=QueryIntent,
-                api_version="v1beta"
+                prompt=prompt, response_schema=QueryIntent, api_version="v1beta"
             )
         except Exception as e:
             logger.error(f"Router failed (fallback to general_info): {e}")
@@ -83,8 +83,9 @@ class IntentRouter:
 if __name__ == "__main__":
     # Тестовый запуск
     import asyncio
+
     from src.core.config import Config
-    
+
     async def test():
         cfg = Config.from_env()
         router = IntentRouter(cfg)
@@ -99,14 +100,13 @@ if __name__ == "__main__":
             "номер технотрона",
             "номер метиза",
             "кто главный айтишник?",
-            "как позвонить в айти службу?"
+            "как позвонить в айти службу?",
         ]
-        with open('scratch/router_test_results.txt', 'w', encoding='utf-8') as f:
+        with open("scratch/router_test_results.txt", "w", encoding="utf-8") as f:
             for q in test_queries:
                 res = await router.classify_query(q)
                 output = f"Q: {q} -> Intent: {res.intent}, Company: {res.target_company}, Person: {res.target_person}\n"
-                print(output, end='')
+                print(output, end="")
                 f.write(output)
-
 
     asyncio.run(test())

@@ -139,7 +139,9 @@ class AudioLLMService:
         pcm_data = await self._convert_ogg_to_pcm(ogg_bytes)
         return await self.process_voice_from_pcm(pcm_data, system_prompt)
 
-    async def process_voice_from_pcm(self, pcm_data: bytes, system_prompt: Optional[str] = None, format: str = "ogg") -> tuple[bytes, Optional[str]]:
+    async def process_voice_from_pcm(
+        self, pcm_data: bytes, system_prompt: Optional[str] = None, format: str = "ogg"
+    ) -> tuple[bytes, Optional[str]]:
         try:
             response_pcm, transcript = await self._call_live_api(pcm_data, system_prompt)
             if format == "mp3":
@@ -208,7 +210,7 @@ class AudioLLMService:
             try:
                 async with client.aio.live.connect(model=model_name, config=config) as session:
                     logger.info(f"Connected to Live API (Attempt {retry_count + 1})")
-                    
+
                     # Отправка аудио
                     await session.send_realtime_input(activity_start=types.ActivityStart())
                     await session.send_realtime_input(
@@ -257,11 +259,19 @@ class AudioLLMService:
                                             captured_user_query = query
                                             results = await search_callback(query)
                                             context = "\n\n".join(results) if results else "Информация не найдена"
-                                            function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"context": context}))
+                                            function_responses.append(
+                                                types.FunctionResponse(
+                                                    id=fc.id, name=fc.name, response={"context": context}
+                                                )
+                                            )
                                         elif fc.name == "search_contacts" and contact_callback is not None:
                                             query = fc.args.get("query", "")
                                             result_text = await contact_callback(query)
-                                            function_responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response={"result": result_text}))
+                                            function_responses.append(
+                                                types.FunctionResponse(
+                                                    id=fc.id, name=fc.name, response={"result": result_text}
+                                                )
+                                            )
 
                                     if function_responses:
                                         await session.send_tool_response(function_responses=function_responses)
@@ -270,12 +280,14 @@ class AudioLLMService:
                             raise
 
                     await asyncio.wait_for(_receive(), timeout=self.model_config.response_timeout)
-                    break # Успешно завершили
+                    break  # Успешно завершили
 
             except Exception as e:
                 retry_count += 1
                 err_msg = str(e)
-                if ("1006" in err_msg or "abnormal closure" in err_msg or isinstance(e, asyncio.TimeoutError)) and retry_count <= max_retries:
+                if (
+                    "1006" in err_msg or "abnormal closure" in err_msg or isinstance(e, asyncio.TimeoutError)
+                ) and retry_count <= max_retries:
                     logger.warning(f"Live API connection lost. Retrying {retry_count}/{max_retries}...")
                     await asyncio.sleep(1)
                     continue
@@ -297,13 +309,19 @@ class AudioLLMService:
 
     async def _convert_ogg_to_pcm(self, ogg_bytes: bytes) -> bytes:
         loop = asyncio.get_event_loop()
+
         def _convert():
             try:
                 audio = AudioSegment.from_file(io.BytesIO(ogg_bytes))
             except Exception:
                 audio = AudioSegment.from_file(io.BytesIO(ogg_bytes), format="ogg")
-            audio = audio.set_frame_rate(self.model_config.input_sample_rate).set_channels(self.model_config.channels).set_sample_width(self.model_config.sample_width)
+            audio = (
+                audio.set_frame_rate(self.model_config.input_sample_rate)
+                .set_channels(self.model_config.channels)
+                .set_sample_width(self.model_config.sample_width)
+            )
             return audio.raw_data
+
         return await loop.run_in_executor(None, _convert)
 
     def _get_full_model_name(self, model_name: str) -> str:
@@ -348,6 +366,7 @@ class AudioLLMService:
 
             chunks = []
             output_transcript = ""
+
             async def _receive():
                 nonlocal output_transcript
                 async for response in session.receive():
@@ -366,28 +385,49 @@ class AudioLLMService:
 
     async def _convert_pcm_to_ogg(self, pcm_bytes: bytes) -> bytes:
         loop = asyncio.get_event_loop()
+
         def _convert():
-            audio = AudioSegment(data=pcm_bytes, sample_width=self.model_config.sample_width, frame_rate=self.model_config.output_sample_rate, channels=self.model_config.channels)
+            audio = AudioSegment(
+                data=pcm_bytes,
+                sample_width=self.model_config.sample_width,
+                frame_rate=self.model_config.output_sample_rate,
+                channels=self.model_config.channels,
+            )
             buffer = io.BytesIO()
             audio.export(buffer, format="ogg", codec="libopus", bitrate=self.model_config.ogg_bitrate)
             return buffer.getvalue()
+
         return await loop.run_in_executor(None, _convert)
 
     async def _convert_pcm_to_mp3(self, pcm_bytes: bytes) -> bytes:
         loop = asyncio.get_event_loop()
+
         def _convert():
-            audio = AudioSegment(data=pcm_bytes, sample_width=self.model_config.sample_width, frame_rate=self.model_config.output_sample_rate, channels=self.model_config.channels)
+            audio = AudioSegment(
+                data=pcm_bytes,
+                sample_width=self.model_config.sample_width,
+                frame_rate=self.model_config.output_sample_rate,
+                channels=self.model_config.channels,
+            )
             audio = audio.set_channels(1).set_frame_rate(16000)
             buffer = io.BytesIO()
             audio.export(buffer, format="mp3", bitrate="32k")
             return buffer.getvalue()
+
         return await loop.run_in_executor(None, _convert)
 
     async def _convert_pcm_to_wav(self, pcm_bytes: bytes) -> bytes:
         loop = asyncio.get_event_loop()
+
         def _convert():
-            audio = AudioSegment(data=pcm_bytes, sample_width=self.model_config.sample_width, frame_rate=self.model_config.output_sample_rate, channels=self.model_config.channels)
+            audio = AudioSegment(
+                data=pcm_bytes,
+                sample_width=self.model_config.sample_width,
+                frame_rate=self.model_config.output_sample_rate,
+                channels=self.model_config.channels,
+            )
             buffer = io.BytesIO()
             audio.export(buffer, format="wav")
             return buffer.getvalue()
+
         return await loop.run_in_executor(None, _convert)
