@@ -19,7 +19,7 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
     page = 1
     per_page = 1000
     
-    logger.info("Запуск получения пользователей из Яндекс 360 API...")
+    logger.info(f"Запуск получения пользователей из Яндекс 360 API для организации ID: {org_id}...")
     
     # Рекомендуемый хост согласно документации Яндекс 360
     base_url = "https://api360.yandex.net"
@@ -36,7 +36,7 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
         
         if response.status_code != 200:
             raise RuntimeError(
-                f"Ошибка запроса к Яндекс 360 API (HTTP {response.status_code}): {response.text}"
+                f"Ошибка запроса к Яндекс 360 API (HTTP {response.status_code}) для организации {org_id}: {response.text}"
             )
             
         data = response.json()
@@ -47,14 +47,14 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
         users.extend(page_users)
         
         total_pages = data.get("pages", 1)
-        logger.info(f"Загружена страница {page} из {total_pages} (пользователей на странице: {len(page_users)})")
+        logger.info(f"Организация {org_id}: загружена страница {page} из {total_pages} (пользователей: {len(page_users)})")
         
         if page >= total_pages:
             break
             
         page += 1
         
-    logger.info(f"Всего получено {len(users)} аккаунтов из Яндекс 360.")
+    logger.info(f"Организация {org_id}: получено {len(users)} аккаунтов.")
     return users
 
 def build_yandex_name_map(yandex_users: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -94,9 +94,17 @@ def sync_emails(config=None) -> Dict[str, Any]:
             return {"success": False, "error": f"Не удалось загрузить конфигурацию: {e}"}
             
     token = config.yandex_360_token
-    org_id = config.yandex_360_org_id
+    org_id_raw = config.yandex_360_org_id
     
-    if not token or not org_id:
+    # Распарсим org_id, который может быть многострочным с комментариями после #
+    org_ids = []
+    if org_id_raw:
+        for line in str(org_id_raw).split('\n'):
+            line_clean = line.split('#')[0].strip()
+            if line_clean:
+                org_ids.append(line_clean)
+    
+    if not token or not org_ids:
         return {
             "success": False, 
             "error": "Параметры YANDEX_360_TOKEN или YANDEX_360_ORG_ID не заданы в .env"
@@ -107,8 +115,16 @@ def sync_emails(config=None) -> Dict[str, Any]:
         return {"success": False, "error": f"Файл базы контактов не найден по пути: {db_path}"}
         
     try:
-        # 1. Запрос пользователей из API Яндекс 360
-        yandex_users = fetch_yandex_users(token, org_id)
+        # 1. Запрос пользователей из API Яндекс 360 для всех организаций
+        yandex_users = []
+        for o_id in org_ids:
+            try:
+                org_users = fetch_yandex_users(token, o_id)
+                yandex_users.extend(org_users)
+            except Exception as e:
+                logger.error(f"Не удалось получить пользователей для организации {o_id}: {e}")
+                raise RuntimeError(f"Сбой при запросе организации {o_id}: {e}")
+                
         yandex_map = build_yandex_name_map(yandex_users)
         
         # 2. Чтение контактов из SQLite

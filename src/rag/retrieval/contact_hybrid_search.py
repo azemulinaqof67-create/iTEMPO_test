@@ -134,6 +134,7 @@ class ContactHybridSearch:
                     "full_name": payload.get("full_name", ""),
                     "position": payload.get("position", ""),
                     "phone": payload.get("phone", ""),
+                    "email": payload.get("email", ""),
                 })
             return results
 
@@ -256,5 +257,6 @@ class ContactHybridSearch:
                 "full_name": payload.get("full_name", ""),
                 "position": payload.get("position", ""),
                 "phone": payload.get("phone", ""),
+                "email": payload.get("email", ""),
             })
         return results

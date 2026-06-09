@@ -295,26 +295,9 @@ class AgentOrchestrator:
         # 2. Классифицируем уже "чистый" запрос
         intent = await self.router.classify_query(resolved_query)
         
-        # 3. Если компания не определена в запросе, берем из настроек пользователя
-        if not intent.target_company and state.get("user_company"):
-            mapping = {
-                "it": "АЙТИ",
-                "itz": "ИТЗ",
-                "technotron": "ПТФК Технотрон",
-                "metiz": "Метиз",
-                "kmk": "КМК",
-                "ntz": "НТЗ",
-                "kzmk": "КЗМК",
-                "zteo": "ЗТЭО",
-                "td": "ТД",
-                "sks": "СКС",
-                "port": "Порт"
-            }
-            mapped_company = mapping.get(state["user_company"].lower())
-            if mapped_company:
-                intent.target_company = mapped_company
-                logger.info(f"Using user-selected company fallback: {mapped_company}")
-        
+        # 3. Мы больше не применяем fallback компанию здесь. Контакты ищутся глобально (Shared).
+        # Fallback компания для документов (базы знаний) будет применена непосредственно в search_documents.
+
         # Сохраняем в историю само сообщение; сбрасываем answer чтобы не short-circuit-нуть следующий запрос
         return {
             "intent": intent, 
@@ -389,6 +372,20 @@ class AgentOrchestrator:
     async def search_documents(self, state: AgentState) -> Dict[str, Any]:
         logger.info(f"--- SEARCH DOCUMENTS (RAG) ---")
         query_to_search = state["query"]
+        intent = state["intent"]
+        
+        # Применяем fallback компанию только для поиска документов
+        if not intent.target_company and state.get("user_company"):
+            mapping = {
+                "it": "АЙТИ", "itz": "ИТЗ", "technotron": "ПТФК Технотрон",
+                "metiz": "Метиз", "kmk": "КМК", "ntz": "НТЗ",
+                "kzmk": "КЗМК", "zteo": "ЗТЭО", "td": "ТД",
+                "sks": "СКС", "port": "Порт"
+            }
+            mapped_company = mapping.get(state["user_company"].lower())
+            if mapped_company:
+                intent.target_company = mapped_company
+                logger.info(f"Using user-selected company fallback for documents: {mapped_company}")
         
         # Обогащаем запрос, если пришли из контактов
         if state.get("extracted_context"):
@@ -469,7 +466,13 @@ RULE 2: Use retrieved database context ONLY for external facts.
 6. Вытаскивай ВСЕ детали (условия, списки документов, шаги, сроки) из предоставленного контекста и пиши их прямо в чат.
 7. Если в контексте есть ответ — выдай его максимально ПОЛНО. 
 8. Если информации нет — честно скажи об этом.
-9. Оформляй контакты красиво.
+9. СТРОГОЕ ОФОРМЛЕНИЕ КОНТАКТОВ: Если пользователь запрашивает контакт, ВСЕГДА выводи его в виде четкого списка, где каждый пункт с новой строки. Не используй разговорный стиль. Формат должен быть строго таким:
+<b>ФИО:</b> [ФИО]
+<b>Должность:</b> [Должность]
+<b>Отдел:</b> [Отдел]
+<b>Компания:</b> [Компания]
+<b>Телефон:</b> [Телефон]
+<b>Email:</b> [Email]
 10. ЗАПРЕТ ГАЛЛЮЦИНАЦИЙ: Никогда не пиши фразы "по ссылке", "см. ссылку", если в твоем КОНТЕКСТЕ нет реального URL (http://...). Если информация есть только в виде текста — пиши её текстом. 
 11. НИКОГДА не выводи внутренние ссылки на файлы вида [Текст](slug) или [[slug]].
 12. СТРОЖАЙШИЙ ЗАПРЕТ: Тебе ЗАПРЕЩЕНО писать "информация доступна по ссылке" или выводить пути к файлам (например, technotron/graphics/...). Если пользователь спросил график — ты ОБЯЗАН найти время в предоставленном тексте и написать его.

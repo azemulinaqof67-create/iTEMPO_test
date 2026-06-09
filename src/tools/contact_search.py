@@ -82,10 +82,11 @@ class ContactSearchTool:
             formatted_results = []
             for i, row in enumerate(rows, 1):
                 logger.info(f"[QDRANT SEARCH TOOL] Match found: {row['full_name']} | Score: {row.get('score', 0.0):.3f}")
+                email_str = f", Email: {row['email']}" if row.get("email") else ""
                 formatted_results.append(
                     f"{i}. {row['full_name'] or '—'} — {row['position'] or '—'}\n"
                     f"   Отдел: {row['department'] or '—'}, Компания: {row['company'] or '—'}\n"
-                    f"   Тел: {row['phone'] or '—'}"
+                    f"   Тел: {row['phone'] or '—'}{email_str}"
                 )
 
             return "Найдены контакты:\n\n" + "\n\n".join(formatted_results)
