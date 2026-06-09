@@ -38,7 +38,7 @@ async def migrate(config=None, force=False):
     sqlite_conn.row_factory = sqlite3.Row
     cursor = sqlite_conn.cursor()
     try:
-        cursor.execute("SELECT id, company, department, full_name, position, phone FROM contacts")
+        cursor.execute("SELECT id, company, department, full_name, position, phone, email FROM contacts")
         rows = cursor.fetchall()
     except Exception as e:
         logger.error(f"Ошибка при чтении из SQLite: {e}")
@@ -110,6 +110,11 @@ async def migrate(config=None, force=False):
         )
         qdrant_client.create_payload_index(
             collection_name=collection_name,
+            field_name="email",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+        qdrant_client.create_payload_index(
+            collection_name=collection_name,
             field_name="exact_phone",
             field_schema=models.PayloadSchemaType.KEYWORD,
         )
@@ -140,9 +145,10 @@ async def migrate(config=None, force=False):
                 department = r["department"] or ""
                 company = r["company"] or ""
                 phone = r["phone"] or ""
+                email = r["email"] or ""
                 
                 # Строка для эмбеддингов
-                texts.append(f"{full_name} {position} {department} {company}".strip())
+                texts.append(f"{full_name} {position} {department} {company} {email}".strip())
                 
                 payloads.append({
                     "id": r["id"],
@@ -151,6 +157,7 @@ async def migrate(config=None, force=False):
                     "full_name": full_name,
                     "position": position,
                     "phone": phone,
+                    "email": email,
                     "exact_phone": phone # для точного поиска
                 })
                 

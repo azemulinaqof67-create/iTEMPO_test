@@ -1752,6 +1752,218 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         except WebSocketDisconnect:
             _ws_clients.discard(websocket)
 
+
+    # ─── Логи Аудита ──────────────────────────────────────────────────────
+
+    @app.get("/api/audit_logs")
+    async def get_audit_logs(limit: int = 100, offset: int = 0, user: Dict = Depends(require_permission("view_audit_logs"))):
+        if not _assistant or not _assistant.chat_history:
+            return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        logs = await _assistant.chat_history.get_admin_audit_logs(limit=limit, offset=offset)
+        return {"logs": logs}
+
+    # ─── Контакты (Телефонный справочник) ─────────────────────────────────
+
+    def set_contacts_sync_pending(state: bool):
+        sync_file = Path(_config.data_path) / "contacts_sync_state.json"
+        sync_file.write_text(json.dumps({"pending": state}), encoding="utf-8")
+
+    def get_contacts_sync_pending() -> bool:
+        sync_file = Path(_config.data_path) / "contacts_sync_state.json"
+        if sync_file.exists():
+            try:
+                data = json.loads(sync_file.read_text(encoding="utf-8"))
+                return data.get("pending", False)
+            except Exception:
+                pass
+        return False
+
+    @app.get("/api/contacts")
+    async def get_contacts(limit: int = 100, offset: int = 0, search: Optional[str] = None, user: Dict = Depends(require_auth)):
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        if not db_path.exists():
+            return {"contacts": [], "total": 0}
+            
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM contacts ORDER BY company ASC, department ASC, full_name ASC")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        contacts = [dict(r) for r in rows]
+        
+        if search:
+            s = search.lower()
+            contacts = [c for c in contacts if 
+                        s in (c.get("full_name") or "").lower() or 
+                        s in (c.get("phone") or "").lower() or 
+                        s in (c.get("email") or "").lower() or 
+                        s in (c.get("company") or "").lower() or 
+                        s in (c.get("department") or "").lower()]
+                        
+        total = len(contacts)
+        contacts = contacts[offset : offset + limit]
+        
+        return {"contacts": contacts, "total": total}
+
+    class ContactCreate(BaseModel):
+        company: str
+        department: str
+        full_name: str
+        position: str
+        phone: str
+        email: Optional[str] = ""
+
+    @app.post("/api/contacts")
+    async def create_contact(body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO contacts (company, department, full_name, position, phone, email) VALUES (?, ?, ?, ?, ?, ?)",
+            (body.company, body.department, body.full_name, body.position, body.phone, body.email)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Создание контакта", f"Добавлен: {body.full_name} ({body.phone})")
+            
+        set_contacts_sync_pending(True)
+        return {"success": True, "id": new_id}
+
+    @app.put("/api/contacts/{contact_id}")
+    async def update_contact(contact_id: int, body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # Получаем старые данные для лога
+        cursor.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,))
+        old_row = cursor.fetchone()
+        old_dict = dict(old_row) if old_row else {}
+        
+        cursor.execute(
+            "UPDATE contacts SET company=?, department=?, full_name=?, position=?, phone=?, email=? WHERE id=?",
+            (body.company, body.department, body.full_name, body.position, body.phone, body.email, contact_id)
+        )
+        conn.commit()
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            changes = []
+            if old_dict:
+                mapping = {
+                    "full_name": ("ФИО", body.full_name),
+                    "phone": ("телефон", body.phone),
+                    "email": ("email", body.email),
+                    "company": ("предприятие", body.company),
+                    "department": ("отдел", body.department),
+                    "position": ("должность", body.position)
+                }
+                
+                for key, (label, new_val) in mapping.items():
+                    old_val = old_dict.get(key, "")
+                    # Ensure both are strings for comparison and strip
+                    old_str = str(old_val).strip() if old_val is not None else ""
+                    new_str = str(new_val).strip() if new_val is not None else ""
+                    
+                    if old_str != new_str:
+                        changes.append(f"{label} с '{old_str}' на '{new_str}'")
+            
+            change_str = ", ".join(changes) if changes else "без изменений"
+            
+            await _assistant.chat_history.log_admin_action(
+                user["username"], 
+                "Изменение контакта", 
+                f"Изменен {body.full_name}: {change_str}"
+            )
+            
+        set_contacts_sync_pending(True)
+        return {"success": True}
+
+    @app.delete("/api/contacts/{contact_id}")
+    async def delete_contact(contact_id: int, user: Dict = Depends(require_permission("edit_contacts"))):
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT full_name FROM contacts WHERE id = ?", (contact_id,))
+        row = cursor.fetchone()
+        name = row[0] if row else "Unknown"
+        
+        cursor.execute("DELETE FROM contacts WHERE id=?", (contact_id,))
+        conn.commit()
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Удаление контакта", f"Удален: {name}")
+            
+        set_contacts_sync_pending(True)
+        return {"success": True}
+
+    @app.get("/api/contacts/sync_status")
+    async def sync_status(user: Dict = Depends(require_auth)):
+        return {"pending": get_contacts_sync_pending()}
+
+    @app.post("/api/contacts/sync")
+    async def trigger_sync(user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Только супер-администратор может запускать ручную синхронизацию")
+            
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Ручная синхронизация", "Запущена ручная пересборка контактов")
+            
+        async def run_sync():
+            try:
+                import sys
+                from pathlib import Path
+                project_root = Path(__file__).parent.parent
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+                from scripts.migrate_contacts_to_qdrant import migrate
+                await migrate(config=_config, force=True)
+                set_contacts_sync_pending(False)
+                if _assistant and _assistant.chat_history:
+                    await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Синхронизация контактов успешно завершена")
+            except Exception as e:
+                logger.error(f"Sync error: {e}")
+                
+        asyncio.create_task(run_sync())
+        return {"success": True, "message": "Синхронизация запущена в фоне"}
+
+    async def _nightly_sync_task():
+        import datetime
+        while True:
+            try:
+                now = datetime.datetime.now()
+                if now.hour == 3 and now.minute == 0:
+                    if get_contacts_sync_pending():
+                        logger.info("Starting automatic nightly sync for contacts...")
+                        from scripts.migrate_contacts_to_qdrant import migrate
+                        await migrate(config=_config, force=True)
+                        set_contacts_sync_pending(False)
+                        if _assistant and _assistant.chat_history:
+                            await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Автоматическая ночная синхронизация успешно завершена")
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Nightly sync task error: {e}")
+                await asyncio.sleep(60)
+
+    @app.on_event("startup")
+    async def startup_event():
+        asyncio.create_task(_nightly_sync_task())
+
     # ─── Вспомогательные функции ─────────────────────────────────────────
 
     _admin_app = app

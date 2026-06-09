@@ -24,7 +24,9 @@ const PERMISSION_NAMES = {
   'delete_documents': 'Удаление документов',
   'apply_changes': 'Применение изменений',
   'send_broadcast': 'Рассылка сообщений',
-  'manage_api_keys': 'Gemini API ключи'
+  'manage_api_keys': 'Gemini API ключи',
+  'edit_contacts': 'Изменение телефонных номеров',
+  'view_audit_logs': 'Просмотр логов аудита'
 };
 
 function hasPerm(p) {
@@ -120,7 +122,9 @@ function showApp() {
     'logs': 'view_logs',
     'documents': 'view_documents',
     'broadcast': 'send_broadcast',
-    'keys': 'manage_api_keys'
+    'keys': 'manage_api_keys',
+    'contacts': 'edit_contacts',
+    'audit': 'view_audit_logs'
   };
   
   navItems.forEach(item => {
@@ -225,6 +229,8 @@ function showApp() {
     else if (hasPerm('view_documents')) targetPage = 'documents';
     else if (hasPerm('send_broadcast')) targetPage = 'broadcast';
     else if (hasPerm('manage_api_keys')) targetPage = 'keys';
+    else if (hasPerm('edit_contacts')) targetPage = 'contacts';
+    else if (hasPerm('view_audit_logs')) targetPage = 'audit';
     else if (currentUser.role === 'superadmin') targetPage = 'admins';
     else targetPage = '';
   }
@@ -302,6 +308,8 @@ function showPage(name, navEl) {
     broadcast: () => {},
     keys: loadKeys,
     admins: loadAdmins,
+    contacts: loadContacts,
+    audit: loadAuditLogs,
   };
   if (loaders[name]) loaders[name]();
   return false;
@@ -462,7 +470,7 @@ async function loadUsers() {
     allUsers = data.users || [];
     renderUsersTable(allUsers);
   } catch(e) {
-    document.getElementById('usersBody').innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    document.getElementById('usersBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
@@ -479,7 +487,7 @@ function filterUsers() {
 function renderUsersTable(users) {
   const tbody = document.getElementById('usersBody');
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет пользователей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет пользователей</td></tr>';
     return;
   }
   tbody.innerHTML = users.map(u => {
@@ -612,14 +620,14 @@ async function searchLogs() {
     renderLogsTable(currentLogs);
     renderLogsPagination(data.total || 0);
   } catch(e) {
-    document.getElementById('logsBody').innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    document.getElementById('logsBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
 function renderLogsTable(logs) {
   const tbody = document.getElementById('logsBody');
   if (!logs.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет записей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет записей</td></tr>';
     return;
   }
   tbody.innerHTML = logs.map((log, index) => {
@@ -1727,7 +1735,7 @@ let allAdmins = [];
 
 async function loadAdmins() {
   const tbody = document.getElementById('adminsBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>';
   
   try {
     const data = await apiFetch('/api/admin/users');
@@ -1735,7 +1743,7 @@ async function loadAdmins() {
     allAdmins = data.users || [];
     renderAdminsTable(allAdmins);
   } catch(e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
@@ -1743,7 +1751,7 @@ function renderAdminsTable(admins) {
   const tbody = document.getElementById('adminsBody');
   if (!tbody) return;
   if (!admins.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет администраторов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет администраторов</td></tr>';
     return;
   }
   
@@ -2088,3 +2096,222 @@ window.submitCreateFolder = async function() {
     if (currentPage === 'dashboard') loadDashboard();
   }, 60000);
 })();
+// ── Contacts ──────────────────────────────────────────────────────────────
+
+let allContacts = [];
+let contactsOffset = 0;
+
+window.loadContacts = async function() {
+  contactsOffset = 0;
+  await fetchContacts();
+  await checkSyncStatus();
+}
+
+window.fetchContacts = async function() {
+  const search = document.getElementById('contactSearch')?.value || '';
+  const params = new URLSearchParams({limit: PAGE_SIZE, offset: contactsOffset});
+  if (search) params.set('search', search);
+
+  try {
+    const data = await apiFetch(`/api/contacts?${params}`);
+    if (!data) return;
+    allContacts = data.contacts || [];
+    renderContactsTable(allContacts);
+    renderContactsPagination(data.total || 0);
+  } catch(e) {
+    document.getElementById('contactsBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+window.filterContacts = function() {
+  contactsOffset = 0;
+  fetchContacts();
+}
+
+window.renderContactsTable = function(contacts) {
+  const tbody = document.getElementById('contactsBody');
+  if (!contacts.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет контактов</td></tr>';
+    return;
+  }
+  tbody.innerHTML = contacts.map(c => {
+    return `
+      <tr>
+                <td style="font-weight: 500;">${escapeHtml(c.full_name)}</td>
+        <td>${escapeHtml(c.position || '')}</td>
+        <td>${escapeHtml(c.department || '')}</td>
+        <td>${escapeHtml(c.company || '')}</td>
+        <td><code>${escapeHtml(c.phone || '')}</code></td>
+          <td>${escapeHtml(c.email || '')}</td>
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-ghost btn-sm" onclick='showContactModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>✏️</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteContact(${c.id})">🗑</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+window.renderContactsPagination = function(total) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const current = Math.floor(contactsOffset / PAGE_SIZE);
+  const el = document.getElementById('contactsPagination');
+  if (!el || pages <= 1) { if(el) el.innerHTML=''; return; }
+
+  let html = `<span>${total} записей</span>`;
+  html += `<button class="page-btn" onclick="contactsGoPage(${Math.max(0,current-1)})">‹</button>`;
+  for (let i = Math.max(0, current-2); i <= Math.min(pages-1, current+2); i++) {
+    html += `<button class="page-btn ${i===current?'active':''}" onclick="contactsGoPage(${i})">${i+1}</button>`;
+  }
+  html += `<button class="page-btn" onclick="contactsGoPage(${Math.min(pages-1,current+1)})">›</button>`;
+  el.innerHTML = html;
+}
+
+window.contactsGoPage = function(page) {
+  contactsOffset = page * PAGE_SIZE;
+  fetchContacts();
+}
+
+window.showContactModal = function(contact = null) {
+  const isEdit = !!contact;
+  const title = isEdit ? 'Изменить контакт' : 'Добавить контакт';
+  
+  const c = contact || { full_name: '', position: '', department: '', company: '', phone: '', email: '' };
+
+  const bodyHtml = `
+    <div class="form-vertical">
+      <div class="form-group">
+        <label>ФИО</label>
+        <input type="text" class="text-input" id="contactName" value="${escapeHtml(c.full_name)}" required>
+      </div>
+      <div class="form-group">
+        <label>Должность</label>
+        <input type="text" class="text-input" id="contactPos" value="${escapeHtml(c.position)}" required>
+      </div>
+      <div class="form-group">
+        <label>Отдел</label>
+        <input type="text" class="text-input" id="contactDept" value="${escapeHtml(c.department)}" required>
+      </div>
+      <div class="form-group">
+        <label>Предприятие</label>
+        <input type="text" class="text-input" id="contactComp" value="${escapeHtml(c.company)}" required>
+      </div>
+      <div class="form-group">
+        <label>Телефон (вн.)</label>
+        <input type="text" class="text-input" id="contactPhone" value="${escapeHtml(c.phone)}" required>
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" class="text-input" id="contactEmail" value="${escapeHtml(c.email)}">
+      </div>
+    </div>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveContact(${isEdit ? c.id : 'null'})">Сохранить</button>
+  `;
+
+  openModal(title, bodyHtml, footerHtml, false);
+}
+
+window.saveContact = async function(id) {
+  const payload = {
+    full_name: document.getElementById('contactName').value.trim(),
+    position: document.getElementById('contactPos').value.trim(),
+    department: document.getElementById('contactDept').value.trim(),
+    company: document.getElementById('contactComp').value.trim(),
+    phone: document.getElementById('contactPhone').value.trim(),
+    email: document.getElementById('contactEmail').value.trim()
+  };
+
+  if (!payload.full_name || !payload.phone) {
+    toast('ФИО и телефон обязательны', 'error');
+    return;
+  }
+
+  try {
+    const url = id ? `/api/contacts/${id}` : '/api/contacts';
+    const method = id ? 'PUT' : 'POST';
+    
+    await apiFetch(url, {
+      method: method,
+      body: JSON.stringify(payload)
+    });
+    
+    toast('Контакт сохранен. Изменения применятся ночью (в 3:00)', 'success');
+    closeModal();
+    loadContacts();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+window.deleteContact = async function(id) {
+  if (!confirm('Вы уверены, что хотите удалить этот контакт?')) return;
+  
+  try {
+    await apiFetch(`/api/contacts/${id}`, { method: 'DELETE' });
+    toast('Контакт удален. Изменения применятся ночью (в 3:00)', 'success');
+    loadContacts();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+window.checkSyncStatus = async function() {
+  if (currentUser.role !== 'superadmin') return;
+  try {
+    const res = await apiFetch('/api/contacts/sync_status');
+    const btn = document.getElementById('btnSyncContacts');
+    if (res && res.pending) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  } catch(e) {}
+}
+
+window.syncContactsNow = async function() {
+  if (!confirm('Запустить полную переиндексацию контактов прямо сейчас?')) return;
+  try {
+    await apiFetch('/api/contacts/sync', { method: 'POST' });
+    toast('Синхронизация запущена в фоне', 'success');
+    document.getElementById('btnSyncContacts').classList.add('hidden');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Audit Logs ────────────────────────────────────────────────────────────
+
+let auditOffset = 0;
+
+window.loadAuditLogs = async function() {
+  auditOffset = 0;
+  await fetchAuditLogs();
+}
+
+window.fetchAuditLogs = async function() {
+  const params = new URLSearchParams({limit: PAGE_SIZE, offset: auditOffset});
+  try {
+    const data = await apiFetch(`/api/audit_logs?${params}`);
+    if (!data) return;
+    renderAuditTable(data.logs || []);
+  } catch(e) {
+    document.getElementById('auditBody').innerHTML = `<tr><td colspan="4" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+window.renderAuditTable = function(logs) {
+  const tbody = document.getElementById('auditBody');
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="loading-cell">Нет записей</td></tr>';
+    return;
+  }
+  tbody.innerHTML = logs.map(l => {
+    const time = new Date(l.timestamp * 1000).toLocaleString('ru', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return `
+      <tr>
+        <td style="font-size:11px;white-space:nowrap">${time}</td>
+        <td style="font-weight:500">${escapeHtml(l.admin_username)}</td>
+        <td><span class="tag">${escapeHtml(l.action)}</span></td>
+        <td style="font-size:13px">${escapeHtml(l.details || '')}</td>
+      </tr>`;
+  }).join('');
+}

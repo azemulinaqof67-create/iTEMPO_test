@@ -368,6 +368,17 @@ class ChatHistoryManager:
                 );
             """)
 
+            # 2.5 Таблица admin_audit_logs
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS admin_audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    admin_username TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    timestamp DOUBLE PRECISION NOT NULL
+                );
+            """)
+
             # 3. Инициализация суперадмина по умолчанию
             admin_exists = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM admin_users WHERE username = 'admin')")
             if not admin_exists:
@@ -800,6 +811,43 @@ class ChatHistoryManager:
             return await conn.fetchval(
                 f"SELECT COUNT(*) FROM chat_messages m {where}", *params
             ) or 0
+
+    async def log_admin_action(self, admin_username: str, action: str, details: str = ""):
+        """Логирование действия администратора в аудит лог."""
+        pool = await self.get_pool()
+        timestamp = time.time()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO admin_audit_logs (admin_username, action, details, timestamp)
+                VALUES ($1, $2, $3, $4)
+                """,
+                admin_username, action, details, timestamp
+            )
+        logger.info(f"Audit Log: {admin_username} - {action} - {details}")
+
+    async def get_admin_audit_logs(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Получить логи аудита администраторов."""
+        pool = await self.get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, admin_username, action, details, timestamp
+                FROM admin_audit_logs
+                ORDER BY timestamp DESC
+                LIMIT $1 OFFSET $2
+                """, limit, offset
+            )
+        result = []
+        for row in rows:
+            result.append({
+                "id": row["id"],
+                "admin_username": row["admin_username"],
+                "action": row["action"],
+                "details": row["details"],
+                "timestamp": row["timestamp"]
+            })
+        return result
 
     def truncate_history_by_tokens(self, history: List[Dict[str, str]], max_tokens: int) -> List[Dict[str, str]]:
         """
