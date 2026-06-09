@@ -2278,6 +2278,31 @@ window.syncContactsNow = async function() {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+window.syncYandexEmails = async function() {
+  if (!confirm('Запустить синхронизацию почт из Яндекс 360?')) return;
+  const btn = document.getElementById('btnSyncYandex');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Синхронизация...';
+  }
+  try {
+    const res = await apiFetch('/api/contacts/sync_yandex', { method: 'POST' });
+    if (res && res.success) {
+      toast(`Синхронизация завершена. Обновлено почт: ${res.updated_count}`, 'success');
+      loadContacts();
+    } else {
+      toast(`Ошибка: ${res ? res.error : 'Неизвестная ошибка'}`, 'error');
+    }
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '📥 Импорт из Яндекс 360';
+    }
+  }
+}
+
 // ── Audit Logs ────────────────────────────────────────────────────────────
 
 let auditOffset = 0;

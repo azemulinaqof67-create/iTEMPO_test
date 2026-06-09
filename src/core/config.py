@@ -352,6 +352,8 @@ class Config:
     admin_enabled: bool = True
     admin_port: int = 8080
     admin_password: str = "tempo_admin_2024"
+    yandex_360_token: Optional[str] = None
+    yandex_360_org_id: Optional[str] = None
 
     rag: RAGConfig = field(default_factory=RAGConfig)
     helpdesk: HelpdeskConfig = field(default_factory=HelpdeskConfig)
@@ -457,6 +459,8 @@ class Config:
         self.force_proxy = (force_proxy_val == "1") if force_proxy_val is not None else self.force_proxy
         self.max_webhook_url = os.getenv("MAX_WEBHOOK_URL", self.max_webhook_url)
         self.max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", self.max_webhook_secret)
+        self.yandex_360_token = os.getenv("YANDEX_360_TOKEN", self.yandex_360_token)
+        self.yandex_360_org_id = os.getenv("YANDEX_360_ORG_ID", self.yandex_360_org_id)
 
     @classmethod
     def from_env(cls, env_file: str = ".env", models_yaml: str = "models_config.yaml") -> "Config":
@@ -631,6 +635,8 @@ class Config:
             admin_enabled=_get_bool("ADMIN_ENABLED", app_y, "admin_enabled", True),
             admin_port=_get_int("ADMIN_PORT", app_y, "admin_port", 8080),
             admin_password=_get_str("ADMIN_PASSWORD", app_y, "admin_password", "tempo_admin_2024"),
+            yandex_360_token=os.getenv("YANDEX_360_TOKEN"),
+            yandex_360_org_id=os.getenv("YANDEX_360_ORG_ID"),
         )
 
     # Property Aliases for backward compatibility

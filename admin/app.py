@@ -1957,6 +1957,45 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     async def sync_status(user: Dict = Depends(require_auth)):
         return {"pending": get_contacts_sync_pending()}
 
+    @app.post("/api/contacts/sync_yandex")
+    async def trigger_yandex_sync(user: Dict = Depends(require_permission("edit_contacts"))):
+        await asyncio.to_thread(backup_database)
+        try:
+            import sys
+            import importlib
+            project_root = Path(__file__).parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            import scripts.sync_yandex_emails
+            importlib.reload(scripts.sync_yandex_emails)
+            from scripts.sync_yandex_emails import sync_emails
+            
+            res = await asyncio.to_thread(sync_emails, _config)
+            if not res.get("success"):
+                return {"success": False, "error": res.get("error", "Неизвестная ошибка")}
+                
+            updated_count = res.get("updated_count", 0)
+            total_yandex = res.get("total_yandex", 0)
+            
+            if _assistant and _assistant.chat_history:
+                await _assistant.chat_history.log_admin_action(
+                    user["username"], 
+                    "Синхронизация почт Яндекс 360", 
+                    f"Импортировано почт: {updated_count} из {total_yandex} аккаунтов"
+                )
+                
+            if updated_count > 0:
+                set_contacts_sync_pending(True)
+                
+            return {
+                "success": True, 
+                "updated_count": updated_count, 
+                "total_yandex": total_yandex
+            }
+        except Exception as e:
+            logger.exception("Исключение в эндпоинте /api/contacts/sync_yandex")
+            return {"success": False, "error": str(e)}
+
     @app.post("/api/contacts/sync")
     async def trigger_sync(user: Dict = Depends(require_auth)):
         if user["role"] != "superadmin":
