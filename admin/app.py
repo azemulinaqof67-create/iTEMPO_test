@@ -30,6 +30,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+BACKUP_RETENTION_COUNT = 30
+
 # Глобальное состояние (устанавливается при запуске)
 _config = None
 _assistant = None
@@ -1778,15 +1780,60 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 pass
         return False
 
+    def get_db_connection():
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception as e:
+            logger.warning(f"Не удалось установить PRAGMA для SQLite: {e}")
+        return conn
+
+    def backup_database():
+        import sqlite3
+        import datetime
+        try:
+            db_path = Path(_config.data_path) / "contacts.db"
+            if not db_path.exists():
+                return
+                
+            backup_dir = Path(_config.data_path) / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Удаляем старые бэкапы, если их больше лимита
+            existing_backups = sorted(backup_dir.glob("contacts_backup_*.db"))
+            while len(existing_backups) >= BACKUP_RETENTION_COUNT:
+                try:
+                    existing_backups[0].unlink()
+                    existing_backups.pop(0)
+                except Exception as e:
+                    logger.warning(f"Ошибка удаления старого бэкапа: {e}")
+                    break
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = backup_dir / f"contacts_backup_{timestamp}.db"
+            
+            # Выполняем резервное копирование через sqlite3 backup API
+            src_conn = sqlite3.connect(db_path, timeout=30.0)
+            dst_conn = sqlite3.connect(backup_path)
+            with dst_conn:
+                src_conn.backup(dst_conn)
+            dst_conn.close()
+            src_conn.close()
+            logger.info(f"Создан бэкап базы данных контактов: {backup_path.name}")
+        except Exception as e:
+            logger.error(f"Не удалось создать бэкап базы данных: {e}")
+
     @app.get("/api/contacts")
     async def get_contacts(limit: int = 100, offset: int = 0, search: Optional[str] = None, user: Dict = Depends(require_auth)):
-        import sqlite3
         db_path = Path(_config.data_path) / "contacts.db"
         if not db_path.exists():
             return {"contacts": [], "total": 0}
             
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute("SELECT * FROM contacts ORDER BY company ASC, department ASC, full_name ASC")
@@ -1819,9 +1866,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     @app.post("/api/contacts")
     async def create_contact(body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
-        import sqlite3
-        db_path = Path(_config.data_path) / "contacts.db"
-        conn = sqlite3.connect(db_path)
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO contacts (company, department, full_name, position, phone, email) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1839,10 +1885,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     @app.put("/api/contacts/{contact_id}")
     async def update_contact(contact_id: int, body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
-        import sqlite3
-        db_path = Path(_config.data_path) / "contacts.db"
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Получаем старые данные для лога
@@ -1891,9 +1935,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
 
     @app.delete("/api/contacts/{contact_id}")
     async def delete_contact(contact_id: int, user: Dict = Depends(require_permission("edit_contacts"))):
-        import sqlite3
-        db_path = Path(_config.data_path) / "contacts.db"
-        conn = sqlite3.connect(db_path)
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute("SELECT full_name FROM contacts WHERE id = ?", (contact_id,))

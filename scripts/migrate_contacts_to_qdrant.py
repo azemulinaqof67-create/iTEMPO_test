@@ -34,7 +34,12 @@ async def migrate(config=None, force=False):
         return
         
     logger.info(f"Чтение данных из SQLite ({sqlite_db_path})...")
-    sqlite_conn = sqlite3.connect(sqlite_db_path)
+    sqlite_conn = sqlite3.connect(sqlite_db_path, timeout=30.0)
+    try:
+        sqlite_conn.execute("PRAGMA journal_mode=WAL;")
+        sqlite_conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception as e:
+        logger.warning(f"Не удалось установить PRAGMA для SQLite в скрипте миграции: {e}")
     sqlite_conn.row_factory = sqlite3.Row
     cursor = sqlite_conn.cursor()
     try:

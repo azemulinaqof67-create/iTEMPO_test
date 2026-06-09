@@ -62,7 +62,7 @@ class HybridSearchService:
                 if not db_path.exists():
                     raise FileNotFoundError(f"Файл базы данных не найден: {db_path.absolute()}")
                 
-                async with aiosqlite.connect(str(db_path)) as db:
+                async with aiosqlite.connect(str(db_path), timeout=30.0) as db:
                     async with db.execute("SELECT full_name FROM contacts WHERE full_name IS NOT NULL AND full_name != ''") as cursor:
                         rows = await cursor.fetchall()
                         contact_names = [row[0] for row in rows]
