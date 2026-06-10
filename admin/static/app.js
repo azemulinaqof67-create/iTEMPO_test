@@ -123,7 +123,7 @@ function showApp() {
     'documents': 'view_documents',
     'broadcast': 'send_broadcast',
     'keys': 'manage_api_keys',
-    'contacts': 'edit_contacts',
+    'contacts': null,
     'audit': 'view_audit_logs'
   };
   
@@ -133,13 +133,34 @@ function showApp() {
     if (match) {
       const pageName = match[1];
       const reqPerm = pagePermissions[pageName];
+      let isVisible = true;
+      
       if (reqPerm && !hasPerm(reqPerm)) {
-        item.classList.add('hidden');
-      } else {
+        isVisible = false;
+      }
+      
+      // Специфично для роли viewer: видит ТОЛЬКО contacts
+      if (currentUser.role === 'viewer' && pageName !== 'contacts') {
+        isVisible = false;
+      }
+      
+      if (isVisible) {
         item.classList.remove('hidden');
+      } else {
+        item.classList.add('hidden');
       }
     }
   });
+  
+  // Убираем надпись "Admin Panel" для обычных пользователей (viewer)
+  const logoSub = document.querySelector('.logo-sub');
+  if (logoSub) {
+      if (currentUser.role === 'viewer') {
+          logoSub.textContent = 'Справочник';
+      } else {
+          logoSub.textContent = 'Admin Panel';
+      }
+  }
   
   // Сайдбар "Администраторы" (только для superadmin)
   const navAdmins = document.getElementById('navItemAdmins');
@@ -223,7 +244,8 @@ function showApp() {
   }
   
   if (!savedPage) {
-    if (hasPerm('view_stats')) targetPage = 'dashboard';
+    if (currentUser.role === 'viewer') targetPage = 'contacts';
+    else if (hasPerm('view_stats')) targetPage = 'dashboard';
     else if (hasPerm('manage_bot_users')) targetPage = 'users';
     else if (hasPerm('view_logs')) targetPage = 'logs';
     else if (hasPerm('view_documents')) targetPage = 'documents';
@@ -234,6 +256,20 @@ function showApp() {
     else if (currentUser.role === 'superadmin') targetPage = 'admins';
     else targetPage = '';
   }
+  
+  // Управление кнопками в справочнике
+  const btnAddContact = document.getElementById('btnAddContact');
+  const btnSyncYandex = document.getElementById('btnSyncYandex');
+  const btnSyncContacts = document.getElementById('btnSyncContacts');
+  const thContactActions = document.getElementById('thContactActions');
+  const canEditContacts = hasPerm('edit_contacts');
+  
+  if (btnAddContact) btnAddContact.style.display = canEditContacts ? '' : 'none';
+  if (btnSyncYandex) btnSyncYandex.style.display = canEditContacts ? '' : 'none';
+  if (btnSyncContacts && btnSyncContacts.classList.contains('hidden') === false) {
+    btnSyncContacts.style.display = canEditContacts ? '' : 'none';
+  }
+  if (thContactActions) thContactActions.style.display = canEditContacts ? '' : 'none';
   
   if (targetPage) {
     const activeNav = Array.from(document.querySelectorAll('.sidebar-nav .nav-item')).find(item => {
@@ -1813,7 +1849,8 @@ function showAdminModal(adminId = null) {
   const title = admin ? `Редактирование администратора: ${admin.username}` : 'Создание нового администратора';
   
   const roleOptions = `
-    <option value="admin" ${admin && admin.role !== 'superadmin' ? 'selected' : ''}>Администратор организации</option>
+    <option value="viewer" ${admin && admin.role === 'viewer' ? 'selected' : ''}>Только чтение (Справочник)</option>
+    <option value="admin" ${admin && admin.role !== 'superadmin' && admin?.role !== 'viewer' ? 'selected' : ''}>Администратор организации</option>
     <option value="superadmin" ${admin && admin.role === 'superadmin' ? 'selected' : ''}>Суперадминистратор (полный доступ)</option>
   `;
   
@@ -2100,6 +2137,16 @@ window.submitCreateFolder = async function() {
 
 let allContacts = [];
 let contactsOffset = 0;
+let contactsPageSize = 50;
+
+window.changeContactsPageSize = function() {
+    const select = document.getElementById('contactsPageSizeSelect');
+    if (select) {
+        contactsPageSize = parseInt(select.value, 10);
+        contactsOffset = 0;
+        fetchContacts();
+    }
+};
 
 window.loadContacts = async function() {
   contactsOffset = 0;
@@ -2109,7 +2156,7 @@ window.loadContacts = async function() {
 
 window.fetchContacts = async function() {
   const search = document.getElementById('contactSearch')?.value || '';
-  const params = new URLSearchParams({limit: PAGE_SIZE, offset: contactsOffset});
+  const params = new URLSearchParams({limit: contactsPageSize, offset: contactsOffset});
   if (search) params.set('search', search);
 
   try {
@@ -2134,7 +2181,18 @@ window.renderContactsTable = function(contacts) {
     tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет контактов</td></tr>';
     return;
   }
+  const canEdit = hasPerm('edit_contacts');
   tbody.innerHTML = contacts.map(c => {
+    let actionsHtml = '';
+    if (canEdit) {
+      actionsHtml = `
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-ghost btn-sm" onclick='showContactModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>✏️</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteContact(${c.id})">🗑</button>
+          </div>
+        </td>`;
+    }
     return `
       <tr>
                 <td style="font-weight: 500;">${escapeHtml(c.full_name)}</td>
@@ -2143,19 +2201,14 @@ window.renderContactsTable = function(contacts) {
         <td>${escapeHtml(c.company || '')}</td>
         <td><code>${escapeHtml(c.phone || '')}</code></td>
           <td>${escapeHtml(c.email || '')}</td>
-        <td>
-          <div class="cell-actions">
-            <button class="btn btn-ghost btn-sm" onclick='showContactModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>✏️</button>
-            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteContact(${c.id})">🗑</button>
-          </div>
-        </td>
+        ${actionsHtml}
       </tr>`;
   }).join('');
 }
 
 window.renderContactsPagination = function(total) {
-  const pages = Math.ceil(total / PAGE_SIZE);
-  const current = Math.floor(contactsOffset / PAGE_SIZE);
+  const pages = Math.ceil(total / contactsPageSize);
+  const current = Math.floor(contactsOffset / contactsPageSize);
   const el = document.getElementById('contactsPagination');
   if (!el || pages <= 1) { if(el) el.innerHTML=''; return; }
 
@@ -2169,8 +2222,15 @@ window.renderContactsPagination = function(total) {
 }
 
 window.contactsGoPage = function(page) {
-  contactsOffset = page * PAGE_SIZE;
+  contactsOffset = page * contactsPageSize;
   fetchContacts();
+  // Перематываем наверх
+  const tableContainer = document.querySelector('#pageContacts .card');
+  if (tableContainer) {
+      tableContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 window.showContactModal = function(contact = null) {

@@ -131,6 +131,27 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         token = request.cookies.get("admin_token")
         if token and token in _active_sessions:
             return _active_sessions[token]
+            
+        # Проверяем прозрачную авторизацию от IIS/Nginx (SSO/NTLM)
+        remote_user = request.headers.get("X-Remote-User")
+        if remote_user and _assistant and _assistant.chat_history:
+            # remote_user может прийти с доменом, например DOMAIN\user
+            username = remote_user.split("\\")[-1].strip()
+            
+            admin_user = await _assistant.chat_history.get_admin_user_by_username(username)
+            if admin_user:
+                return admin_user
+            else:
+                # Если пользователь есть в AD и прошел через IIS, но его нет в нашей БД, 
+                # мы можем автоматически выдать ему роль viewer на лету.
+                return {
+                    "id": -1,
+                    "username": username,
+                    "role": "viewer",
+                    "company_id": None,
+                    "company_ids": [],
+                    "permissions": []
+                }
         
         # Проверяем Basic Auth (для обратной совместимости/скриптов)
         auth = request.headers.get("Authorization", "")
