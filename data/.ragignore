@@ -2,3 +2,7 @@
 CONVENTIONS.md
 README.md
 .ragignore
+
+*index.md
+.trash*
+.versions*

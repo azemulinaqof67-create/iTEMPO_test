@@ -10,6 +10,11 @@
     uv run run_all_bots.py
 """
 import asyncio
+import sys
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import logging
 import os
 import threading
@@ -168,6 +173,12 @@ async def _run_all(config: Config):
             pass
     
     # ── Мягкое закрытие базы данных ─────────────────────────────────────
+    try:
+        await assistant.close()
+        logger.info("✅ Ресурсы ассистента успешно освобождены.")
+    except Exception as e:
+        logger.error(f"Ошибка при закрытии ассистента: {e}")
+
     try:
         if hasattr(client_manager, '_shared_qdrant') and client_manager._shared_qdrant:
             client_manager._shared_qdrant.close()

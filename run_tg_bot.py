@@ -7,7 +7,12 @@
 Аналог run_bot.py — оба файла запускают только Telegram.
 """
 import os
+import sys
+import asyncio
 import warnings
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
 

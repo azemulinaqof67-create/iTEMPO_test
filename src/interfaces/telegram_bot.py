@@ -6,23 +6,22 @@ Async Telegram бот интерфейс.
 
 import asyncio
 import logging
+import os
 import re
-import time
 from typing import Optional
 
 import pytz
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     Defaults,
     MessageHandler,
-    CallbackQueryHandler,
     filters,
 )
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.assistant.assistant import AssistantService
 from src.core.config import Config
@@ -30,7 +29,6 @@ from src.core.exceptions import AssistantError
 from src.rag.ingestion.document_processor import DocumentProcessor
 from src.rag.ingestion.embeddings import EmbeddingService
 
-import os
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=log_level)
 logger = logging.getLogger(__name__)
@@ -41,16 +39,14 @@ _assistant: Optional[AssistantService] = None
 
 from src.core.constants import COMPANIES
 
+
 def _get_company_keyboard() -> InlineKeyboardMarkup:
     """Возвращает клавиатуру выбора предприятия"""
     keyboard = []
     # Группируем по 2 кнопки в ряд
     items = list(COMPANIES.items())
     for i in range(0, len(items), 2):
-        row = [
-            InlineKeyboardButton(name, callback_data=f"company_{code}")
-            for code, name in items[i:i+2]
-        ]
+        row = [InlineKeyboardButton(name, callback_data=f"company_{code}") for code, name in items[i : i + 2]]
         keyboard.append(row)
     return InlineKeyboardMarkup(keyboard)
 
@@ -61,7 +57,7 @@ def _get_main_menu_keyboard(voice_enabled: bool) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("🏭 Выбрать компанию", callback_data="menu_company")],
         [InlineKeyboardButton(voice_label, callback_data="menu_voice")],
-        [InlineKeyboardButton("🗑 Очистить историю", callback_data="menu_clear")]
+        [InlineKeyboardButton("🗑 Очистить историю", callback_data="menu_clear")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -71,10 +67,7 @@ def _get_company_menu_keyboard() -> InlineKeyboardMarkup:
     keyboard = []
     items = list(COMPANIES.items())
     for i in range(0, len(items), 2):
-        row = [
-            InlineKeyboardButton(name, callback_data=f"company_{code}")
-            for code, name in items[i:i+2]
-        ]
+        row = [InlineKeyboardButton(name, callback_data=f"company_{code}") for code, name in items[i : i + 2]]
         keyboard.append(row)
     # Добавляем кнопку назад
     keyboard.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data="menu_main")])
@@ -85,7 +78,7 @@ def _get_menu_text(voice_enabled: bool, company_name: Optional[str] = None) -> s
     """Формирует текст для меню"""
     status = "ВКЛЮЧЕНЫ — отвечаю голосом" if voice_enabled else "ВЫКЛЮЧЕНЫ — отвечаю текстом"
     company = company_name if company_name else "Не выбрано"
-    
+
     text = (
         "<b>🏠 Главное меню ассистента</b>\n\n"
         f"🏭 Предприятие: <b>{company}</b>\n"
@@ -182,9 +175,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Добавляем информацию о голосовых сообщениях
     if voice_available:
         welcome_message += (
-            "🎤 <b>Голосовые сообщения</b>\n"
-            "   • Отправляйте голосовые запросы\n"
-            "   • Получайте голосовые ответы\n\n"
+            "🎤 <b>Голосовые сообщения</b>\n   • Отправляйте голосовые запросы\n   • Получайте голосовые ответы\n\n"
         )
     else:
         welcome_message += "🎤 <b>Голосовые сообщения: недоступны</b>\n   • Используйте текстовые запросы\n\n"
@@ -213,26 +204,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not user_company:
                 await update.message.reply_text(
                     "👋 Добро пожаловать! Пожалуйста, выберите ваше предприятие для получения максимально точных ответов:",
-                    reply_markup=_get_company_keyboard()
+                    reply_markup=_get_company_keyboard(),
                 )
                 return
             else:
                 user_company_name = COMPANIES.get(user_company, user_company)
-                welcome_message = f"✅ Выбрано предприятие: <b>{user_company_name}</b>\n<i>(Для изменения используйте /change_company)</i>\n\n" + welcome_message
+                welcome_message = (
+                    f"✅ Выбрано предприятие: <b>{user_company_name}</b>\n<i>(Для изменения используйте /change_company)</i>\n\n"
+                    + welcome_message
+                )
     except Exception as e:
         logger.error(f"Error getting user company: {e}")
 
     await update.message.reply_text(welcome_message, parse_mode="HTML")
 
+
 async def change_company_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для смены текущего предприятия"""
     if not update.message or not update.effective_user:
         return
-        
-    await update.message.reply_text(
-        "🏭 Выберите ваше предприятие:",
-        reply_markup=_get_company_keyboard()
-    )
+
+    await update.message.reply_text("🏭 Выберите ваше предприятие:", reply_markup=_get_company_keyboard())
 
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -242,10 +234,10 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     assistant: AssistantService = context.bot_data["assistant"]
     user_id = str(update.effective_user.id)
-    
+
     voice_enabled = True
     company_name = None
-    
+
     if assistant.chat_history:
         voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
         company_id = await assistant.chat_history.get_user_company(user_id)
@@ -254,7 +246,7 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = _get_menu_text(voice_enabled, company_name)
     reply_markup = _get_main_menu_keyboard(voice_enabled)
-    
+
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
@@ -264,7 +256,7 @@ async def toggle_voice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-    assistant: AssistantService = context.bot_data.get("assistant")
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
 
     if not assistant or not assistant.chat_history:
         await update.message.reply_text("⚠️ База данных недоступна.")
@@ -280,84 +272,79 @@ async def toggle_voice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         icon, label = "💬", "ОТКЛЮЧЕНЫ — отвечаю текстом на голосовые сообщения"
 
-    await update.message.reply_text(
-        f"{icon} <b>Голосовые ответы: {label}</b>",
-        parse_mode="HTML"
-    )
+    await update.message.reply_text(f"{icon} <b>Голосовые ответы: {label}</b>", parse_mode="HTML")
+
 
 async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на инлайн кнопки меню и выбора предприятия"""
     query = update.callback_query
-    await query.answer()
-    
-    if not query.data:
+    if query is None or update.effective_user is None or not context.bot_data:
         return
-        
+    await query.answer()
+
+    query_data = query.data
+    if not query_data:
+        return
+
     user_id = str(update.effective_user.id)
-    assistant: AssistantService = context.bot_data["assistant"]
-    
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
+    if not assistant or not assistant.chat_history:
+        await query.edit_message_text("❌ Ошибка: модуль истории не подключен.")
+        return
+
     # ─── 1. Возврат в главное меню ──────────────────────────────────────────
-    if query.data == "menu_main":
+    if query_data == "menu_main":
         voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
         company_id = await assistant.chat_history.get_user_company(user_id)
         company_name = COMPANIES.get(company_id, company_id) if company_id else None
-        
+
         await query.edit_message_text(
             _get_menu_text(voice_enabled, company_name),
             reply_markup=_get_main_menu_keyboard(voice_enabled),
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
-        
+
     # ─── 2. Переход к выбору компании ──────────────────────────────────────
-    elif query.data == "menu_company":
+    elif query_data == "menu_company":
         await query.edit_message_text(
-            "🏭 <b>Выберите ваше предприятие:</b>",
-            reply_markup=_get_company_menu_keyboard(),
-            parse_mode="HTML"
+            "🏭 <b>Выберите ваше предприятие:</b>", reply_markup=_get_company_menu_keyboard(), parse_mode="HTML"
         )
-        
+
     # ─── 3. Переключение голосового режима ──────────────────────────────────
-    elif query.data == "menu_voice":
+    elif query_data == "menu_voice":
         current = await assistant.chat_history.get_voice_mode(user_id)
         new_mode = not current
         await assistant.chat_history.set_voice_mode(user_id, new_mode)
-        
+
         company_id = await assistant.chat_history.get_user_company(user_id)
         company_name = COMPANIES.get(company_id, company_id) if company_id else None
-        
+
         await query.edit_message_text(
-            _get_menu_text(new_mode, company_name),
-            reply_markup=_get_main_menu_keyboard(new_mode),
-            parse_mode="HTML"
+            _get_menu_text(new_mode, company_name), reply_markup=_get_main_menu_keyboard(new_mode), parse_mode="HTML"
         )
-        
+
     # ─── 4. Очистка истории ──────────────────────────────────────────────────
-    elif query.data == "menu_clear":
+    elif query_data == "menu_clear":
         await clear_history(update, context)
-        
+
     # ─── 5. Установка выбранной компании ─────────────────────────────────────
-    elif query.data.startswith("company_"):
-        company_id = query.data.split("company_")[1]
+    elif query_data.startswith("company_"):
+        company_id = query_data.split("company_")[1]
         company_name = COMPANIES.get(company_id, company_id)
-        
+
         try:
-            if assistant.chat_history:
-                await assistant.chat_history.set_user_company(user_id, company_id)
-                # После выбора компании возвращаемся в главное меню с подтверждением
-                voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
-                
-                success_text = (
-                    f"✅ Предприятие <b>{company_name}</b> успешно установлено!\n\n"
-                    f"{_get_menu_text(voice_enabled, company_name)}"
-                )
-                
-                await query.edit_message_text(
-                    success_text,
-                    reply_markup=_get_main_menu_keyboard(voice_enabled),
-                    parse_mode="HTML"
-                )
-            else:
-                await query.edit_message_text("❌ Ошибка: модуль истории не подключен.")
+            await assistant.chat_history.set_user_company(user_id, company_id)
+            # После выбора компании возвращаемся в главное меню с подтверждением
+            voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
+
+            success_text = (
+                f"✅ Предприятие <b>{company_name}</b> успешно установлено!\n\n"
+                f"{_get_menu_text(voice_enabled, company_name)}"
+            )
+
+            await query.edit_message_text(
+                success_text, reply_markup=_get_main_menu_keyboard(voice_enabled), parse_mode="HTML"
+            )
         except Exception as e:
             logger.error(f"Error setting company: {e}")
             await query.edit_message_text("❌ Произошла ошибка при сохранении настроек.")
@@ -365,41 +352,44 @@ async def company_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /clear - очистка истории разговора"""
+    if not update.effective_user or not update.effective_message or not context.bot_data:
+        return
     user_id = str(update.effective_user.id)
-    assistant: AssistantService = context.bot_data["assistant"]
-    
+    assistant: Optional[AssistantService] = context.bot_data.get("assistant")
+    if not assistant:
+        return
+
     if assistant.chat_history:
         try:
             await assistant.chat_history.clear_history(user_id, clear_summary=True)
             await assistant.orchestrator.clear_memory(user_id)
-            
-            text = "✅ <b>История разговора очищена.</b>"
-            
-            if update.callback_query:
+
+            query = update.callback_query
+            if query:
                 # Получаем текущие настройки для отображения в меню
                 voice_enabled = await assistant.chat_history.get_voice_mode(user_id)
                 company_id = await assistant.chat_history.get_user_company(user_id)
                 company_name = COMPANIES.get(company_id, company_id) if company_id else None
-                
+
                 success_text = f"✅ <b>История разговора очищена!</b>\n\n{_get_menu_text(voice_enabled, company_name)}"
-                await update.callback_query.edit_message_text(
-                    success_text, 
-                    reply_markup=_get_main_menu_keyboard(voice_enabled),
-                    parse_mode="HTML"
+                await query.edit_message_text(
+                    success_text, reply_markup=_get_main_menu_keyboard(voice_enabled), parse_mode="HTML"
                 )
             else:
                 await update.effective_message.reply_text("✅ <b>История разговора очищена.</b>", parse_mode="HTML")
         except Exception as e:
             logger.error(f"Error clearing history: {e}")
             err_text = "❌ Ошибка при очистке истории."
-            if update.callback_query:
-                await update.callback_query.edit_message_text(err_text)
+            query = update.callback_query
+            if query:
+                await query.edit_message_text(err_text)
             else:
                 await update.effective_message.reply_text(err_text)
     else:
         err_text = "ℹ️ История разговоров отключена в настройках."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(err_text)
+        query = update.callback_query
+        if query:
+            await query.edit_message_text(err_text)
         else:
             await update.effective_message.reply_text(err_text)
 
@@ -459,66 +449,212 @@ async def reload_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_document(update: Update, document_rule):
     """
     Отправляет документ пользователю.
-    
+
     Args:
         update: Telegram Update объект
         document_rule: DocumentRule объект с информацией о документе
     """
+    if not update.effective_message:
+        return
     import os
-    
+
     # Определяем базовый путь
-    base_paths = [
-        "e:/Old/bots/Worker/iTEMPO/iTEMPO_test",
-        "/home/administrator/iTEMPO_test"
-    ]
-    
+    base_paths = ["e:/Old/bots/Worker/iTEMPO/iTEMPO_test", "/home/administrator/iTEMPO_test"]
+
     document_path = document_rule.document_path
     file_found = False
-    
+
     for base_path in base_paths:
-        full_path = os.path.join(base_path, document_path.replace('/', os.sep))
+        full_path = os.path.join(base_path, document_path.replace("/", os.sep))
         if os.path.exists(full_path):
             file_found = True
             break
-    
+
     if not file_found:
         logger.warning(f"Document not found: {document_path}")
-        await update.message.reply_text(f"❌ Документ не найден: {document_rule.description}")
+        await update.effective_message.reply_text(f"❌ Документ не найден: {document_rule.description}")
         return
-    
+
     try:
-        with open(full_path, 'rb') as document_file:
+        with open(full_path, "rb") as document_file:
             file_type = document_rule.file_type
             if file_type == "auto":
                 # Определяем тип по расширению
                 extension = os.path.splitext(full_path)[1].lower()
-                if extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']:
+                if extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                     file_type = "image"
-                elif extension == '.pdf':
+                elif extension == ".pdf":
                     file_type = "pdf"
-                elif extension in ['.docx', '.doc']:
+                elif extension in [".docx", ".doc"]:
                     file_type = "docx"
                 else:
                     file_type = "other"
-            
+
             filename = os.path.basename(full_path)
-            
+
             if file_type == "image":
-                await update.message.reply_photo(
-                    photo=document_file,
-                    caption=document_rule.description
-                )
+                await update.effective_message.reply_photo(photo=document_file, caption=document_rule.description)
             else:
                 # Для PDF, DOCX и других файлов
-                await update.message.reply_document(
-                    document=document_file,
-                    filename=filename,
-                    caption=document_rule.description
+                await update.effective_message.reply_document(
+                    document=document_file, filename=filename, caption=document_rule.description
                 )
-                
+
     except Exception as e:
         logger.error(f"Error sending document {document_path}: {e}")
-        await update.message.reply_text(f"❌ Не удалось отправить документ: {document_rule.description}")
+        await update.effective_message.reply_text(f"❌ Не удалось отправить документ: {document_rule.description}")
+
+
+def split_html_message(text: str, max_len: int = 4000) -> list[str]:
+    """
+    Разделяет HTML сообщение на чанки допустимого размера,
+    сохраняя баланс HTML тегов.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    # Разделяем на теги и текст
+    tokens = re.split(r"(<[^>]+>)", text)
+    chunks = []
+
+    current_chunk = []
+    current_len = 0
+    open_tags = []  # стек открытых тегов: список кортежей (имя_тега, полный_открывающий_тег)
+
+    for token in tokens:
+        if not token:
+            continue
+
+        if token.startswith("<") and token.endswith(">"):
+            # Это тег
+            tag_content = token[1:-1].strip()
+            if tag_content.startswith("/"):
+                # Закрывающий тег
+                tag_name = tag_content[1:].strip().split()[0].lower()
+                # Удаляем из стека последний открытый тег с таким именем
+                for i in range(len(open_tags) - 1, -1, -1):
+                    if open_tags[i][0] == tag_name:
+                        open_tags.pop(i)
+                        break
+            elif not tag_content.endswith("/"):
+                # Открывающий тег (игнорируем самозакрывающиеся теги)
+                parts = tag_content.split()
+                if parts:
+                    tag_name = parts[0].lower()
+                    if tag_name in [
+                        "b",
+                        "strong",
+                        "i",
+                        "em",
+                        "u",
+                        "ins",
+                        "s",
+                        "strike",
+                        "del",
+                        "span",
+                        "tg-spoiler",
+                        "a",
+                        "code",
+                        "pre",
+                        "blockquote",
+                    ]:
+                        open_tags.append((tag_name, token))
+
+            # Проверяем, влезет ли этот тег
+            if current_len + len(token) > max_len:
+                # Нужно закрыть текущий чанк
+                closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
+                current_chunk.append(closing_tags)
+                chunks.append("".join(current_chunk))
+
+                # Начинаем новый чанк и открываем теги заново
+                current_chunk = []
+                opening_tags = "".join(full_tag for _, full_tag in open_tags)
+                current_chunk.append(opening_tags)
+                current_len = len(opening_tags)
+
+            current_chunk.append(token)
+            current_len += len(token)
+        else:
+            # Это обычный текст. Он может быть длинным, поэтому его придется разбивать.
+            text_fragment = token
+            while text_fragment:
+                # Сколько места осталось?
+                # Учитываем закрывающие теги в конце чанка
+                closing_tags_len = sum(len(name) + 3 for name, _ in open_tags)  # len('</name>')
+                available = max_len - current_len - closing_tags_len
+
+                if available <= 0:
+                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
+                    current_chunk.append(closing_tags)
+                    chunks.append("".join(current_chunk))
+
+                    current_chunk = []
+                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
+                    current_chunk.append(opening_tags)
+                    current_len = len(opening_tags)
+                    available = max_len - current_len - closing_tags_len
+                    if available <= 0:
+                        available = 1
+
+                if len(text_fragment) <= available:
+                    current_chunk.append(text_fragment)
+                    current_len += len(text_fragment)
+                    break
+                else:
+                    sub_frag = text_fragment[:available]
+                    split_idx = sub_frag.rfind("\n")
+                    if split_idx <= 0:
+                        split_idx = sub_frag.rfind(" ")
+                    if split_idx <= 0:
+                        split_idx = available
+
+                    part_to_add = text_fragment[:split_idx]
+                    text_fragment = text_fragment[split_idx:]
+
+                    current_chunk.append(part_to_add)
+
+                    closing_tags = "".join(f"</{name}>" for name, _ in reversed(open_tags))
+                    current_chunk.append(closing_tags)
+                    chunks.append("".join(current_chunk))
+
+                    current_chunk = []
+                    opening_tags = "".join(full_tag for _, full_tag in open_tags)
+                    current_chunk.append(opening_tags)
+                    current_len = len(opening_tags)
+
+    if current_chunk:
+        chunk_str = "".join(current_chunk)
+        clean_text = re.sub(r"<[^>]+>", "", chunk_str).strip()
+        if clean_text:
+            chunks.append(chunk_str)
+
+    return chunks
+
+
+def split_plain_text(text: str, max_len: int = 4000) -> list[str]:
+    """
+    Разделяет обычный текст на чанки допустимого размера.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    chunks = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+
+        sub_frag = text[:max_len]
+        split_idx = sub_frag.rfind("\n")
+        if split_idx <= 0:
+            split_idx = sub_frag.rfind(" ")
+        if split_idx <= 0:
+            split_idx = max_len
+
+        chunks.append(text[:split_idx])
+        text = text[split_idx:]
+    return chunks
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -539,12 +675,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     assistant: AssistantService = context.bot_data["assistant"]
     session_id = str(user.id)
+    user_company = None
 
     # Запрашиваем компанию перед продолжением общения
     if assistant.chat_history:
-        # Обновляем время последней активности
+        # Обновляем время последней активности и никнейм
         try:
-            await assistant.chat_history.update_last_activity(session_id, "telegram")
+            nickname = user.first_name
+            if user.username:
+                nickname = f"{user.first_name} (@{user.username})"
+            elif user.last_name:
+                nickname = f"{user.first_name} {user.last_name}"
+            await assistant.chat_history.update_last_activity(session_id, "telegram", nickname)
         except Exception:
             pass
 
@@ -559,18 +701,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_company = await assistant.chat_history.get_user_company(session_id)
         if not user_company:
             await update.message.reply_text(
-                "🏭 Пожалуйста, выберите ваше предприятие перед началом работы:",
-                reply_markup=_get_company_keyboard()
+                "🏭 Пожалуйста, выберите ваше предприятие перед началом работы:", reply_markup=_get_company_keyboard()
             )
             return
 
-
     # Отправляем "печатает..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
+
     # Отправляем начальное сообщение
     status_message = await update.message.reply_text("🔄 Готовлю ответ...", parse_mode="HTML")
-    
+
     # Запускаем задачу для обновления статуса
     async def update_status_periodically():
         """Обновляет сообщение со статусом каждые 8 секунд"""
@@ -578,7 +718,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔄 Готовлю ответ...",
             "⏳ Анализирую запрос...",
             "🔍 Поиск информации...",
-            "📝 Формирую ответ..."
+            "📝 Формирую ответ...",
         ]
         counter = 0
         while True:
@@ -589,7 +729,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await status_message.edit_text(new_text, parse_mode="HTML")
             except Exception:
                 break  # Если сообщение было удалено или ошибка редактирования
-    
+
     status_task = asyncio.create_task(update_status_periodically())
 
     try:
@@ -603,15 +743,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session_id=session_id,
             platform="telegram",
             user_name=user.first_name,
-            user_company=user_company
+            user_company=user_company,
         )
-        
+
         answer = result.get("answer", "")
         documents_to_send = result.get("documents_to_send", [])
-        
+
         # Останавливаем обновление статуса
         status_task.cancel()
-        
+
         try:
             await status_message.delete()
         except Exception:
@@ -622,57 +762,63 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 # Extract images from answer and send separately
                 import re
-                
+
                 # Find all image references in markdown format
-                image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+                image_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
                 images = re.findall(image_pattern, answer)
-                
+
                 # Remove image markdown from text
-                clean_answer = re.sub(image_pattern, '', answer).strip()
-                
-                # Send text answer first
+                clean_answer = re.sub(image_pattern, "", answer).strip()
+
+                # Send text answer first (splitting if it is too long)
                 if clean_answer:
-                    await update.message.reply_text(clean_answer, parse_mode="HTML")
-                
+                    for chunk in split_html_message(clean_answer, max_len=4000):
+                        await update.message.reply_text(chunk, parse_mode="HTML")
+
                 # Send images from answer (old method)
                 for alt_text, image_path in images:
                     try:
                         # Check if it's a local file
-                        if image_path.startswith('data/'):
+                        if image_path.startswith("data/"):
                             import os
+
                             # Try to detect the correct base path
-                            if os.path.exists('/home/administrator/iTEMPO_test'):
-                                base_path = '/home/administrator/iTEMPO_test'
+                            if os.path.exists("/home/administrator/iTEMPO_test"):
+                                base_path = "/home/administrator/iTEMPO_test"
                             else:
                                 base_path = "e:/Old/bots/Worker/iTEMPO/iTEMPO_test"
-                            full_path = os.path.join(base_path, image_path.replace('/', os.sep))
-                            with open(full_path, 'rb') as photo_file:
+                            full_path = os.path.join(base_path, image_path.replace("/", os.sep))
+                            with open(full_path, "rb") as photo_file:
                                 await update.message.reply_photo(photo_file, caption=alt_text)
                     except Exception as img_error:
                         logger.error(f"Failed to send image {image_path}: {img_error}")
                         # If image sending fails, send the markdown as text
-                        await update.message.reply_text(f"![{alt_text}]({image_path})", parse_mode="HTML")
-                
+                        for chunk in split_html_message(f"![{alt_text}]({image_path})", max_len=4000):
+                            await update.message.reply_text(chunk, parse_mode="HTML")
+
                 # Send documents from DocumentSender (new method)
                 for document_rule in documents_to_send:
                     await send_document(update, document_rule)
-                    
+
             except Exception as e:
                 logger.warning(f"Error sending message with HTML: {e}")
-                # Если HTML все-таки сломан, шлем чистый текст
-                await update.message.reply_text(answer)
-                
+                # Если HTML все-таки сломан, шлем чистый текст (тоже разбивая)
+                for chunk in split_plain_text(answer, max_len=4000):
+                    await update.message.reply_text(chunk)
+
                 # Still try to send documents
                 for document_rule in documents_to_send:
                     await send_document(update, document_rule)
         else:
-            await update.message.reply_text("❌ Извините, не удалось получить ответ. Попробуйте другой вопрос.", parse_mode="HTML")
+            await update.message.reply_text(
+                "❌ Извините, не удалось получить ответ. Попробуйте другой вопрос.", parse_mode="HTML"
+            )
 
     except AssistantError as e:
         logger.error(f"Assistant error: {e}")
         # Останавливаем обновление статуса
         status_task.cancel()
-        
+
         try:
             await status_message.edit_text(str(e), parse_mode="HTML")
         except Exception:
@@ -682,18 +828,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling message: {e}")
         # Останавливаем обновление статуса
         status_task.cancel()
-        
+
         try:
             await status_message.delete()
         except Exception:
             pass
-            
+
         err_str = str(e).lower()
         if "timed out" in err_str or "network error" in err_str or "connection" in err_str:
             err_msg = "⚠️ <b>Ошибка связи с Telegram</b>. Повторите запрос через пару секунд."
         else:
             err_msg = "❌ Произошла внутренняя ошибка при обработке запроса."
-        
+
         try:
             await update.message.reply_text(err_msg, parse_mode="HTML")
         except Exception:
@@ -725,20 +871,30 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     if assistant.chat_history:
+        # Обновляем время последней активности и никнейм
+        try:
+            nickname = user.first_name
+            if user.username:
+                nickname = f"{user.first_name} (@{user.username})"
+            elif user.last_name:
+                nickname = f"{user.first_name} {user.last_name}"
+            await assistant.chat_history.update_last_activity(session_id, "telegram", nickname)
+        except Exception:
+            pass
+
         user_company = await assistant.chat_history.get_user_company(session_id)
         if not user_company:
             await update.message.reply_text(
-                "🏭 Пожалуйста, выберите ваше предприятие перед началом работы:",
-                reply_markup=_get_company_keyboard()
+                "🏭 Пожалуйста, выберите ваше предприятие перед началом работы:", reply_markup=_get_company_keyboard()
             )
             return
 
     # Показываем статус "думаю" и в тексте, и в экшене
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="record_voice")
-    
+
     # Отправляем начальное сообщение
     status_message = await update.message.reply_text("🎤 Обрабатываю голосовое сообщение...", parse_mode="HTML")
-    
+
     # Запускаем задачу для обновления статуса
     async def update_voice_status_periodically():
         """Обновляет сообщение со статусом каждые 5 секунд"""
@@ -746,7 +902,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🎤 Обрабатываю голосовое сообщение...",
             "🔊 Распознаю речь...",
             "⏳ Анализирую запрос...",
-            "📝 Формирую ответ..."
+            "📝 Формирую ответ...",
         ]
         counter = 0
         while True:
@@ -757,7 +913,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await status_message.edit_text(new_text, parse_mode="HTML")
             except Exception:
                 break  # Если сообщение было удалено или ошибка редактирования
-    
+
     status_task = asyncio.create_task(update_voice_status_periodically())
 
     try:
@@ -789,7 +945,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session_id=session_id,
                 platform="telegram",
             )
-            
+
             status_task.cancel()
             try:
                 await status_message.delete()
@@ -808,7 +964,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for pattern in patterns:
                     found = [lnk.rstrip(".,!?;:)\u2026") for lnk in re.findall(pattern, transcript)]
                     links_in_transcript.extend(found)
-                links_in_transcript = [l for l in links_in_transcript if l.startswith(('http://', 'https://'))]
+                links_in_transcript = [l for l in links_in_transcript if l.startswith(("http://", "https://"))]
                 logger.info(f"Links found in transcript: {links_in_transcript}")
                 logger.info(f"Extracted links from RAG: {extracted_links}")
                 logger.info(f"Transcript content: {transcript[:200]}...")
@@ -819,25 +975,40 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 logger.info(f"All links to send: {list(all_links)}")
 
-                image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+                image_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
                 images = re.findall(image_pattern, transcript)
                 for alt_text, image_path in images:
                     try:
-                        if image_path.startswith('data/'):
+                        if image_path.startswith("data/"):
                             import os
-                            base_path = '/home/administrator/iTEMPO_test' if os.path.exists('/home/administrator/iTEMPO_test') else "e:/Old/bots/Worker/iTEMPO/iTEMPO_test"
-                            full_path = os.path.join(base_path, image_path.replace('/', os.sep))
-                            with open(full_path, 'rb') as photo_file:
+
+                            base_path = (
+                                "/home/administrator/iTEMPO_test"
+                                if os.path.exists("/home/administrator/iTEMPO_test")
+                                else "e:/Old/bots/Worker/iTEMPO/iTEMPO_test"
+                            )
+                            full_path = os.path.join(base_path, image_path.replace("/", os.sep))
+                            with open(full_path, "rb") as photo_file:
                                 await update.message.reply_photo(photo_file, caption=alt_text)
                     except Exception as img_error:
                         logger.error(f"Failed to send image {image_path}: {img_error}")
 
                 if all_links:
                     # Ограничиваем количество ссылок до 3, чтобы не перегружать сообщение
-                    top_links = all_links[:3]
-                    links_list = "\n".join(top_links)
+                    top_links = list(all_links)[:3]
+
+                    formatted_links = []
+                    for link in top_links:
+                        if "yandex" in link or "maps" in link or "2gis" in link or "CPuEm4MY" in link:
+                            formatted_links.append(f"🗺️ <a href='{link}'>Открыть карту / маршрут</a>")
+                        elif "price" in link or "прайс" in link.lower() or ".pdf" in link:
+                            formatted_links.append(f"📄 <a href='{link}'>Открыть документ</a>")
+                        else:
+                            formatted_links.append(f"🔗 <a href='{link}'>Перейти по ссылке</a>")
+
+                    links_list = "\n\n".join(formatted_links)
                     await update.message.reply_text(
-                        f"-> <b>Link / Route:</b>\n\n{links_list}",
+                        f"📎 <b>Прикрепленные материалы:</b>\n\n{links_list}",
                         parse_mode="HTML",
                         disable_web_page_preview=False,
                     )
@@ -860,8 +1031,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Пишем в статусе что именно распознали
             try:
                 await status_message.edit_text(
-                    f"📝 Распознано: <i>{transcript}</i>\n⏳ Анализирую...",
-                    parse_mode="HTML"
+                    f"📝 Распознано: <i>{transcript}</i>\n⏳ Анализирую...", parse_mode="HTML"
                 )
             except Exception:
                 pass
@@ -883,26 +1053,34 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if answer:
                 import re as _re
-                image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+
+                image_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
                 images = _re.findall(image_pattern, answer)
-                clean_answer = _re.sub(image_pattern, '', answer).strip()
+                clean_answer = _re.sub(image_pattern, "", answer).strip()
                 try:
                     if clean_answer:
-                        await update.message.reply_text(clean_answer, parse_mode="HTML")
+                        for chunk in split_html_message(clean_answer, max_len=4000):
+                            await update.message.reply_text(chunk, parse_mode="HTML")
                     for alt_text, image_path in images:
                         try:
-                            if image_path.startswith('data/'):
+                            if image_path.startswith("data/"):
                                 import os
-                                base_path = '/home/administrator/iTEMPO_test' if os.path.exists('/home/administrator/iTEMPO_test') else "e:/Old/bots/Worker/iTEMPO/iTEMPO_test"
-                                full_path = os.path.join(base_path, image_path.replace('/', os.sep))
-                                with open(full_path, 'rb') as photo_file:
+
+                                base_path = (
+                                    "/home/administrator/iTEMPO_test"
+                                    if os.path.exists("/home/administrator/iTEMPO_test")
+                                    else "e:/Old/bots/Worker/iTEMPO/iTEMPO_test"
+                                )
+                                full_path = os.path.join(base_path, image_path.replace("/", os.sep))
+                                with open(full_path, "rb") as photo_file:
                                     await update.message.reply_photo(photo_file, caption=alt_text)
                         except Exception as img_error:
                             logger.error(f"Failed to send image: {img_error}")
                     for document_rule in documents_to_send:
                         await send_document(update, document_rule)
                 except Exception:
-                    await update.message.reply_text(answer)
+                    for chunk in split_plain_text(answer, max_len=4000):
+                        await update.message.reply_text(chunk)
             else:
                 await update.message.reply_text("❌ Не удалось получить ответ. Попробуйте другой вопрос.")
 
@@ -912,7 +1090,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling voice: {e}")
         # Останавливаем обновление статуса
         status_task.cancel()
-        
+
         try:
             await status_message.edit_text(str(e), parse_mode="HTML")
         except Exception:
@@ -922,18 +1100,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Unexpected error handling voice: {e}")
         # Останавливаем обновление статуса
         status_task.cancel()
-        
+
         try:
             await status_message.delete()
         except Exception:
             pass
-            
+
         err_str = str(e).lower()
         if "timed out" in err_str or "network error" in err_str or "connection" in err_str:
             err_msg = "⚠️ <b>Ошибка связи с Telegram (голос)</b>. Повторите запрос через пару секунд."
         else:
             err_msg = "❌ Извините, не удалось обработать голосовое сообщение."
-            
+
         try:
             await update.message.reply_text(err_msg, parse_mode="HTML")
         except Exception:
@@ -946,18 +1124,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def create_bot_application(config: Config) -> Application:
     """Создание приложения бота с увеличенными таймаутами для серверной среды"""
     defaults = Defaults(tzinfo=pytz.UTC)
-    
+
     return (
         ApplicationBuilder()
         .token(config.telegram_token)
         .defaults(defaults)
         .concurrent_updates(True)
         .connect_timeout(30.0)  # Таймаут подключения к Telegram API
-        .read_timeout(60.0)     # Таймаут чтения ответа
-        .write_timeout(30.0)     # Таймаут отправки запроса
-        .pool_timeout(60.0)       # Таймаут пула соединений
-        .connection_pool_size(100) # Увеличенный пул для параллельных запросов
-        .get_updates_connection_pool_size(10) # Отдельный пул для получения обновлений
+        .read_timeout(60.0)  # Таймаут чтения ответа
+        .write_timeout(30.0)  # Таймаут отправки запроса
+        .pool_timeout(60.0)  # Таймаут пула соединений
+        .connection_pool_size(100)  # Увеличенный пул для параллельных запросов
+        .get_updates_connection_pool_size(10)  # Отдельный пул для получения обновлений
         .build()
     )
 
@@ -969,12 +1147,13 @@ def create_telegram_app(config: Config, assistant: AssistantService):
     """
     # Предзагрузка моделей (устраняет задержку на первом запросе)
     from src.core.clients import ClientManager
+
     client_manager = ClientManager.get_instance(config)
     client_manager.preload_models()
 
     # Создаем приложение
     application = create_bot_application(config)
-    
+
     # Сохраняем конфиг и ассистента в bot_data
     application.bot_data["config"] = config
     application.bot_data["assistant"] = assistant
@@ -986,7 +1165,7 @@ def create_telegram_app(config: Config, assistant: AssistantService):
     application.add_handler(CommandHandler("reload", reload_config))
     application.add_handler(CommandHandler("clear", clear_history))
     application.add_handler(CommandHandler("voice", toggle_voice_mode))
-    application.add_handler(CallbackQueryHandler(company_callback, pattern='^(company_|menu_)'))
+    application.add_handler(CallbackQueryHandler(company_callback, pattern="^(company_|menu_)"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     application.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
@@ -1028,11 +1207,19 @@ def run_bot(
     import threading
 
     is_main_thread = threading.current_thread() is threading.main_thread()
-    if not is_main_thread:
-        # Увеличиваем количество повторных попыток для серверной среды
-        application.run_polling(stop_signals=None, bootstrap_retries=10)
-    else:
-        application.run_polling(bootstrap_retries=10)
+    try:
+        if not is_main_thread:
+            # Увеличиваем количество повторных попыток для серверной среды
+            application.run_polling(stop_signals=None, bootstrap_retries=10)
+        else:
+            application.run_polling(bootstrap_retries=10)
+    finally:
+        # Корректно закрываем ассистента и освобождаем пулы соединений
+        if loop.is_running():
+            # Если петля работает, создаем задачу
+            loop.create_task(assistant.close())
+        else:
+            loop.run_until_complete(assistant.close())
 
 
 async def _update_database(config: Config):

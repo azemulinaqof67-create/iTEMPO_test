@@ -1,120 +1,101 @@
-import aiosqlite
 import logging
-from typing import Optional, List, Dict, Any
-from rapidfuzz import process, fuzz, utils
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+from src.core.config import Config
+from src.rag.retrieval.contact_hybrid_search import ContactHybridSearch
 
 logger = logging.getLogger(__name__)
 
+
+class ContactSearchInput(BaseModel):
+    """Схема входных аргументов для инструмента поиска контактов."""
+
+    semantic_query: str = Field(
+        default="",
+        description='Имя, фамилия, должность или отдел искомого лица. ВНИМАНИЕ: Оставьте это поле пустым (""), если пользователь просит вывести просто список или всех сотрудников компании/отдела, чтобы избежать искажения сортировки.',
+    )
+    company_filter: Optional[str] = Field(
+        default=None, description="Название компании для фильтрации контактов (например, 'КМК', 'ЗТЭО', 'ИТЗ')"
+    )
+    exact_phone: Optional[str] = Field(
+        default=None, description="Точный или частичный номер телефона для поиска владельца контакта"
+    )
+    limit: int = Field(
+        default=10,
+        description="Максимальное количество возвращаемых контактов. Увеличьте это значение (вплоть до 50), если пользователь запрашивает список сотрудников или ищет 'других'.",
+    )
+
+
 class ContactSearchTool:
-    def __init__(self, db_path: str = "data/contacts.db"):
-        self.db_path = db_path
+    """Инструмент для поиска контактов в Qdrant с использованием гибридного поиска (Dense + Sparse/BM25)."""
 
-    async def search(self, target_person: str, target_company: Optional[str] = None) -> str:
-        """
-        Поиск контактов в SQLite с использованием нечеткого сравнения (Fuzzy Matching).
-        """
-        if not target_person:
-            return "Не указано имя или должность для поиска."
+    def __init__(self, config: Optional[Config] = None, db_path: Optional[str] = None):
+        self.config = config or Config.from_env()
+        self.search_service = ContactHybridSearch(self.config)
 
-        # Логирование перед поиском
-        logger.info(f"[SQL SEARCH] Intent: contact_search | Person: {target_person} | Company: {target_company}")
+    async def search(
+        self,
+        semantic_query: str = "",
+        company_filter: Optional[str] = None,
+        exact_phone: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        """
+        Выполняет поиск контактов в Qdrant.
+        """
+        logger.info(
+            f"[QDRANT SEARCH TOOL] query: '{semantic_query}' | company: '{company_filter}' | phone: '{exact_phone}'"
+        )
 
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                db.row_factory = aiosqlite.Row
-                
-                # 1. Извлекаем ВСЕХ контакты (база небольшая, это безопасно)
-                query = "SELECT * FROM contacts"
-                async with db.execute(query) as cursor:
-                    rows = await cursor.fetchall()
-                
-                if not rows:
-                    return "База контактов пуста."
+            params_validated = ContactSearchInput(
+                semantic_query=semantic_query,
+                company_filter=company_filter,
+                exact_phone=exact_phone,
+                limit=kwargs.get("limit", 10),
+            )
+        except Exception as e:
+            logger.error(f"Validation error in ContactSearchTool: {e}")
+            return f"Ошибка валидации параметров поиска: {e}"
 
-                # Маппинг коротких ID компаний в ключевые слова для поиска в поле company
-                COMPANY_ID_TO_KEYWORDS = {
-                    "technotron": ["технотрон"],
-                    "metiz":      ["метиз"],
-                    "kmk":        ["кмк", "тэмпо"],
-                    "ntz":        ["нтз", "тэм-по"],
-                    "itz":        ["итз"],
-                    "kzmk":       ["кзмк"],
-                    "zteo":       ["зтэо"],
-                    "td":         ["тд", "торговый"],
-                    "sks":        ["скс"],
-                    "port":       ["порт"],
-                    "it":         ["айти"],
-                }
-                # Подготавливаем слова для бонус-фильтра по компании
-                target_comp_words = []
-                if target_company:
-                    comp_lower = target_company.strip().lower()
-                    if comp_lower in COMPANY_ID_TO_KEYWORDS:
-                        # Использовать русские ключевые слова вместо ID
-                        target_comp_words = COMPANY_ID_TO_KEYWORDS[comp_lower]
-                    else:
-                        target_comp_words = [w.strip().lower() for w in target_company.split() if len(w.strip()) > 2]
+        # Если поисковый запрос состоит только из цифр, а exact_phone не задан,
+        # перенаправляем запрос в exact_phone для поиска по номеру
+        q_digits = "".join(c for c in params_validated.semantic_query if c.isdigit())
+        if q_digits and len(q_digits) >= 4 and not params_validated.exact_phone:
+            params_validated.exact_phone = params_validated.semantic_query
+            params_validated.semantic_query = ""
 
-                # 2. Нечеткий поиск
-                results_with_scores = []
-                for row in rows:
-                    # Считаем скор для каждого поля отдельно
-                    scores = [
-                        fuzz.WRatio(target_person, row['full_name'], processor=utils.default_process),
-                        fuzz.WRatio(target_person, row['position'], processor=utils.default_process),
-                        fuzz.WRatio(target_person, row['department'], processor=utils.default_process)
-                    ]
-                    # Дополнительно добавим partial_ratio для ФИО, чтобы лучше ловить частичные совпадения (одно слово)
-                    partial_score = fuzz.partial_ratio(target_person, row['full_name'], processor=utils.default_process)
-                    
-                    max_score = max(max(scores), partial_score)
-                    
-                    if max_score >= 70: # Порог вхождения
-                        # СТРОГИЙ ФИЛЬТР ПО КОМПАНИИ
-                        if target_comp_words:
-                            row_comp = (row['company'] or "").lower()
-                            
-                            # Проверяем пересечение слов
-                            if not any(w in row_comp for w in target_comp_words):
-                                continue
-                                
-                            # Спец. защита от путаницы Технотрон и Технотрон-Метиз
-                            if "метиз" in row_comp and "метиз" not in target_comp_words:
-                                continue # Искали Технотрон, а попали на Метиз
-                            if "метиз" in target_comp_words and "метиз" not in row_comp:
-                                continue # Искали Метиз, а попали на обычный Технотрон
-                                
-                        results_with_scores.append((max_score, row))
+        if not params_validated.semantic_query and not params_validated.exact_phone:
+            return "Не указано имя, должность или телефон для поиска."
 
-                # Сортируем по убыванию скора
-                results_with_scores.sort(key=lambda x: x[0], reverse=True)
-                
-                # Умная обрезка результатов, чтобы LLM не путалась в похожих фамилиях
-                top_results = []
-                if results_with_scores:
-                    best_score = results_with_scores[0][0]
-                    # Если есть явный лидер с высокой уверенностью
-                    if best_score >= 90:
-                        # Берем только тех, кто отстает от лидера не более чем на 5 баллов
-                        top_results = [r for r in results_with_scores if best_score - r[0] <= 5][:3]
-                    else:
-                        # Иначе берем стандартный топ-3
-                        top_results = results_with_scores[:3]
+        try:
+            rows = await self.search_service.search(
+                semantic_query=params_validated.semantic_query,
+                company_filter=params_validated.company_filter,
+                exact_phone=params_validated.exact_phone,
+                limit=params_validated.limit,
+            )
 
-                formatted_results = []
-                for score, row in top_results:
-                    logger.info(f"[SQL SEARCH] Match found: {row['full_name']} | Score: {score}")
-                    formatted_results.append(
-                        f"{len(formatted_results) + 1}. {row['full_name']} — {row['position']}\n"
-                        f"   Отдел: {row['department']}, Компания: {row['company']}\n"
-                        f"   Тел: {row['phone']}"
-                    )
+            if not rows:
+                search_term = params_validated.semantic_query or params_validated.exact_phone
+                return f"По запросу '{search_term}' ничего не найдено."
 
-                if not formatted_results:
-                    return f"По запросу '{target_person}' ничего не найдено."
+            formatted_results = []
+            for i, row in enumerate(rows, 1):
+                logger.info(
+                    f"[QDRANT SEARCH TOOL] Match found: {row['full_name']} | Score: {row.get('score', 0.0):.3f}"
+                )
+                email_str = f", Email: {row['email']}" if row.get("email") else ""
+                formatted_results.append(
+                    f"{i}. {row['full_name'] or '—'} — {row['position'] or '—'}\n"
+                    f"   Отдел: {row['department'] or '—'}, Компания: {row['company'] or '—'}\n"
+                    f"   Тел: {row['phone'] or '—'}{email_str}"
+                )
 
-                return "Найдены контакты:\n" + "\n\n".join(formatted_results)
+            return "Найдены контакты:\n\n" + "\n\n".join(formatted_results)
 
         except Exception as e:
-            logger.error(f"ContactSearchTool error: {e}")
+            logger.exception(f"ContactSearchTool error: {e}")
             return "Произошла ошибка при поиске в базе контактов."

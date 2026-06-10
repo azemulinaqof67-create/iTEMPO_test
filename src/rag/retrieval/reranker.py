@@ -4,6 +4,7 @@ LLM-based reranker (cross-encoder style).
 
 import logging
 from typing import Dict, List, Literal, Tuple
+
 from pydantic import BaseModel, Field
 
 from src.core.config import Config
@@ -15,9 +16,8 @@ logger = logging.getLogger(__name__)
 
 class RerankerOutput(BaseModel):
     """Схема ответа реранкера."""
-    order: List[int] = Field(
-        description="Индексы наиболее релевантных документов в порядке убывания их полезности."
-    )
+
+    order: List[int] = Field(description="Индексы наиболее релевантных документов в порядке убывания их полезности.")
     status: Literal["CORRECT", "INCORRECT"] = Field(
         description="'CORRECT' если в документах есть ответ или полезная информация, иначе 'INCORRECT'."
     )
@@ -32,9 +32,19 @@ class LLMReranker:
         self.llm = TextLLMService(config)
 
     async def rerank_batch(self, query: str, documents: List[Dict], top_k: int) -> Tuple[List[Dict], str]:
-        """Batch reranking через один LLM вызов."""
+        """Batch reranking через один LLM вызов.
+
+        Если кандидатов мало (≤ rerank_min_docs), пропускаем LLM-реранкер —
+        порядок из RRF/hybrid уже достаточно хорош, а latency критична.
+        """
         if not documents:
             return [], "incorrect"
+
+        # Adaptive skip: при малом числе кандидатов реранкер не нужен
+        min_docs = getattr(self.config, "rerank_min_docs", 5)
+        if len(documents) <= min_docs:
+            logger.info(f"Reranker skipped (candidates={len(documents)} <= min_docs={min_docs})")
+            return documents[:top_k], "correct"
 
         docs_list = []
         for i, doc in enumerate(documents[: self.config.rerank_max_docs]):
@@ -43,8 +53,8 @@ class LLMReranker:
             hints_str = ""
             if system_hints and isinstance(system_hints, list):
                 hints_str = f"(Подсказка системы: {', '.join(system_hints)}) "
-            
-            doc_text = doc.get('text', '')[: self.config.rerank_doc_chars]
+
+            doc_text = doc.get("text", "")[: self.config.rerank_doc_chars]
             docs_list.append(f"[{i}] {hints_str}{doc_text}")
 
         docs_text = "\n\n".join(docs_list)
@@ -77,4 +87,3 @@ class LLMReranker:
                 reranked.append(doc)
 
         return reranked[:top_k], status
-

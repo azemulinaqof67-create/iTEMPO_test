@@ -33,10 +33,10 @@ class TextChunker:
         metadata = doc.get("metadata", {})
 
         context_prefix = self._get_context_prefix(metadata)
-        
+
         # Для справочников контактов ПРИНУДИТЕЛЬНО используем построчный чанкинг с МЕЛКИМ размером чанка
         is_contacts = "contacts" in source.lower()
-        
+
         # Для контактов используем меньший размер чанка, чтобы избежать перемешивания людей в одном блоке
         active_chunk_size = 500 if is_contacts else self.config.chunk_size
         active_overlap = 50 if is_contacts else self.config.chunk_overlap
@@ -80,7 +80,9 @@ class TextChunker:
         if self.semantic_chunker:
             parent_chunks = self.semantic_chunker.chunk(text, max_chunk_size=self.config.parent_chunk_size)
         else:
-            parent_chunks = self._chunk_text(text, self.config.parent_chunk_size, self.config.chunk_overlap, split_by_headers=False)
+            parent_chunks = self._chunk_text(
+                text, self.config.parent_chunk_size, self.config.chunk_overlap, split_by_headers=False
+            )
 
         for parent_text in parent_chunks:
             parent_id = str(uuid.uuid4())
@@ -123,11 +125,13 @@ class TextChunker:
             chunk["document_text"] = full_text
         return chunk
 
-    def _chunk_text(self, text: str, chunk_size: int, overlap: int, initial_company: str = "", split_by_headers: bool = True) -> List[str]:
+    def _chunk_text(
+        self, text: str, chunk_size: int, overlap: int, initial_company: str = "", split_by_headers: bool = True
+    ) -> List[str]:
         """Алгоритм разбивки текста на чанки с поддержкой Sticky Headers."""
         if not split_by_headers:
             return [text]
-            
+
         lines = text.split("\n")
         chunks = []
         current_chunk = []
@@ -140,7 +144,9 @@ class TextChunker:
         # Паттерны заголовков
         company_num_pattern = re.compile(r"^\d+\.?\s+(\d+\.\d+)\s+(АО|ООО|ГК|ИП)\s+(.*)$", re.IGNORECASE)
         section_num_pattern = re.compile(r"^\d+\.?\s+(\d+\.\d+)\s+(.*)$")
-        md_company_pattern = re.compile(r"^#\s+(?:Телефонный\s+справочник\s+)?(?:АО|ООО|ГК|ИП)?\s*[\"«](.*?)[\"»]", re.IGNORECASE)
+        md_company_pattern = re.compile(
+            r"^#\s+(?:Телефонный\s+справочник\s+)?(?:АО|ООО|ГК|ИП)?\s*[\"«](.*?)[\"»]", re.IGNORECASE
+        )
         md_section_pattern = re.compile(r"^###?\s+(.*)$")
 
         for line in lines:
@@ -154,7 +160,7 @@ class TextChunker:
             # Заголовки
             co_match = company_num_pattern.match(line_strip) or md_company_pattern.match(line_strip)
             sec_match = section_num_pattern.match(line_strip) or md_section_pattern.match(line_strip)
-            
+
             is_header = False
             if co_match or sec_match:
                 if sec_match and hasattr(sec_match, "group") and section_num_pattern.match(line_strip):
@@ -172,14 +178,14 @@ class TextChunker:
                         chunks.append(self._finalize_chunk(current_chunk, prefix))
                         current_chunk = []
                         current_len = 0
-                    
+
                     # Обновляем контекст
                     if co_match:
                         current_company = co_match.group(co_match.lastindex).strip()
                         current_section = ""
                     elif sec_match:
                         current_section = sec_match.group(sec_match.lastindex).strip()
-                    
+
                     # Начинаем новый чанк
                     current_chunk = [line]
                     current_len = len(line)
@@ -195,7 +201,7 @@ class TextChunker:
             if current_len + line_len > chunk_size and current_chunk:
                 prefix = self._get_prefix(current_company, current_section)
                 chunks.append(self._finalize_chunk(current_chunk, prefix))
-                
+
                 # Overlap logic
                 current_chunk = current_chunk[-2:] if len(current_chunk) > 2 else current_chunk
                 current_len = sum(len(l) + 1 for l in current_chunk)
@@ -206,14 +212,17 @@ class TextChunker:
         if current_chunk:
             prefix = self._get_prefix(current_company, current_section)
             chunks.append(self._finalize_chunk(current_chunk, prefix))
-            
+
         return chunks
 
     def _get_prefix(self, company: str, section: str) -> str:
         prefix = ""
-        if company: prefix += f"[{company}]"
-        if section: prefix += f" [{section}]"
-        if prefix: prefix += ": "
+        if company:
+            prefix += f"[{company}]"
+        if section:
+            prefix += f" [{section}]"
+        if prefix:
+            prefix += ": "
         return prefix
 
     def _finalize_chunk(self, lines: List[str], prefix: str) -> str:

@@ -7,6 +7,7 @@ Async FastAPI сервер.
 
 import asyncio
 import logging
+import os
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +21,6 @@ from src.core.exceptions import AssistantError
 from src.rag.ingestion.document_processor import DocumentProcessor
 from src.rag.ingestion.embeddings import EmbeddingService
 
-import os
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=log_level)
 logger = logging.getLogger(__name__)
@@ -94,6 +94,14 @@ async def startup_event():
 async def shutdown_event():
     """Очистка ресурсов при остановке сервера"""
     logger.info("--- ОСТАНОВКА СЕРВЕРА ---")
+
+    global _assistant
+    if _assistant:
+        try:
+            await _assistant.close()
+            logger.info("AssistantService closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing AssistantService: {e}")
 
     # Закрываем все клиенты для предотвращения ошибок в __del__
     try:
@@ -288,6 +296,7 @@ async def reload_config():
         logger.error(f"Reload error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
 @app.get("/test")
 async def test_cloudflare():
     """Тестовый эндпоинт для проверки прохождения трафика через Cloudflare"""
@@ -296,23 +305,24 @@ async def test_cloudflare():
     logger.info("======================================")
     return {"status": "CLOUDFLARE WORKS!"}
 
-from fastapi import Request, Header
+
+from fastapi import Header, Request
+
 
 @app.post("/webhook/max")
-async def max_webhook(
-    request: Request,
-    x_max_bot_api_secret: Optional[str] = Header(None)
-):
+async def max_webhook(request: Request, x_max_bot_api_secret: Optional[str] = Header(None)):
     """Эндпоинт для приема событий от MAX мессенджера через Webhook."""
     logger.info("======================================")
     logger.info("==> ВХОДЯЩИЙ ЗАПРОС НА WEBHOOK MAX! <==")
     logger.info("======================================")
-    
+
     config = app.state.config
-    
+
     # Проверка секрета если он настроен
     if config.max_webhook_secret and x_max_bot_api_secret != config.max_webhook_secret:
-        logger.warning(f"ВНИМАНИЕ: Секреты не совпали! Ожидался: {config.max_webhook_secret}, Пришел: {x_max_bot_api_secret}")
+        logger.warning(
+            f"ВНИМАНИЕ: Секреты не совпали! Ожидался: {config.max_webhook_secret}, Пришел: {x_max_bot_api_secret}"
+        )
         logger.warning(f"Все заголовки запроса: {request.headers}")
         # ВРЕМЕННО пропускаем запрос для отладки, не выбрасываем 403
         # raise HTTPException(status_code=403, detail="Invalid secret")
@@ -320,19 +330,19 @@ async def max_webhook(
     try:
         data = await request.json()
         logger.info(f"Получены данные вебхука: {data}")
-        
+
         # Получаем клиента
-        from src.interfaces.max_bot import _dispatch_event, MaxBotClient
-        
+        from src.interfaces.max_bot import MaxBotClient, _dispatch_event
+
         # Используем кэшированный клиент в app.state
         if not hasattr(app.state, "max_client"):
             app.state.max_client = MaxBotClient(token=config.max_token)
-            
+
         _max_client = app.state.max_client
 
         # Обрабатываем событие
         asyncio.create_task(_dispatch_event(data, _max_client, _assistant))
-        
+
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Ошибка при обработке webhook: {e}")

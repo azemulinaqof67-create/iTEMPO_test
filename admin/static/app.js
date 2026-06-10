@@ -11,6 +11,7 @@ const PAGE_SIZE = 50;
 let currentLogs = [];
 let allDocuments = [];
 let currentCompanyFilter = 'all';
+let currentExplorerPath = '';
 let currentUser = null;
 
 const PERMISSION_NAMES = {
@@ -23,7 +24,9 @@ const PERMISSION_NAMES = {
   'delete_documents': 'Удаление документов',
   'apply_changes': 'Применение изменений',
   'send_broadcast': 'Рассылка сообщений',
-  'manage_api_keys': 'Gemini API ключи'
+  'manage_api_keys': 'Gemini API ключи',
+  'edit_contacts': 'Изменение телефонных номеров',
+  'view_audit_logs': 'Просмотр логов аудита'
 };
 
 function hasPerm(p) {
@@ -119,7 +122,9 @@ function showApp() {
     'logs': 'view_logs',
     'documents': 'view_documents',
     'broadcast': 'send_broadcast',
-    'keys': 'manage_api_keys'
+    'keys': 'manage_api_keys',
+    'contacts': null,
+    'audit': 'view_audit_logs'
   };
   
   navItems.forEach(item => {
@@ -128,13 +133,34 @@ function showApp() {
     if (match) {
       const pageName = match[1];
       const reqPerm = pagePermissions[pageName];
+      let isVisible = true;
+      
       if (reqPerm && !hasPerm(reqPerm)) {
-        item.classList.add('hidden');
-      } else {
+        isVisible = false;
+      }
+      
+      // Специфично для роли viewer: видит ТОЛЬКО contacts
+      if (currentUser.role === 'viewer' && pageName !== 'contacts') {
+        isVisible = false;
+      }
+      
+      if (isVisible) {
         item.classList.remove('hidden');
+      } else {
+        item.classList.add('hidden');
       }
     }
   });
+  
+  // Убираем надпись "Admin Panel" для обычных пользователей (viewer)
+  const logoSub = document.querySelector('.logo-sub');
+  if (logoSub) {
+      if (currentUser.role === 'viewer') {
+          logoSub.textContent = 'Справочник';
+      } else {
+          logoSub.textContent = 'Admin Panel';
+      }
+  }
   
   // Сайдбар "Администраторы" (только для superadmin)
   const navAdmins = document.getElementById('navItemAdmins');
@@ -182,6 +208,16 @@ function showApp() {
     }
   }
 
+  // Скрываем кнопку создания папок во фронтенде, если нет прав add_documents
+  const btnCreateFolder = document.getElementById('btnCreateFolder');
+  if (btnCreateFolder) {
+    if (hasPerm('add_documents')) {
+      btnCreateFolder.classList.remove('hidden');
+    } else {
+      btnCreateFolder.classList.add('hidden');
+    }
+  }
+
   // Скрываем кнопку применить изменения, если нет прав apply_changes
   const btnApply = document.getElementById('btnApplyChanges');
   if (btnApply) {
@@ -208,15 +244,32 @@ function showApp() {
   }
   
   if (!savedPage) {
-    if (hasPerm('view_stats')) targetPage = 'dashboard';
+    if (currentUser.role === 'viewer') targetPage = 'contacts';
+    else if (hasPerm('view_stats')) targetPage = 'dashboard';
     else if (hasPerm('manage_bot_users')) targetPage = 'users';
     else if (hasPerm('view_logs')) targetPage = 'logs';
     else if (hasPerm('view_documents')) targetPage = 'documents';
     else if (hasPerm('send_broadcast')) targetPage = 'broadcast';
     else if (hasPerm('manage_api_keys')) targetPage = 'keys';
+    else if (hasPerm('edit_contacts')) targetPage = 'contacts';
+    else if (hasPerm('view_audit_logs')) targetPage = 'audit';
     else if (currentUser.role === 'superadmin') targetPage = 'admins';
     else targetPage = '';
   }
+  
+  // Управление кнопками в справочнике
+  const btnAddContact = document.getElementById('btnAddContact');
+  const btnSyncYandex = document.getElementById('btnSyncYandex');
+  const btnSyncContacts = document.getElementById('btnSyncContacts');
+  const thContactActions = document.getElementById('thContactActions');
+  const canEditContacts = hasPerm('edit_contacts');
+  
+  if (btnAddContact) btnAddContact.style.display = canEditContacts ? '' : 'none';
+  if (btnSyncYandex) btnSyncYandex.style.display = canEditContacts ? '' : 'none';
+  if (btnSyncContacts && btnSyncContacts.classList.contains('hidden') === false) {
+    btnSyncContacts.style.display = canEditContacts ? '' : 'none';
+  }
+  if (thContactActions) thContactActions.style.display = canEditContacts ? '' : 'none';
   
   if (targetPage) {
     const activeNav = Array.from(document.querySelectorAll('.sidebar-nav .nav-item')).find(item => {
@@ -291,6 +344,8 @@ function showPage(name, navEl) {
     broadcast: () => {},
     keys: loadKeys,
     admins: loadAdmins,
+    contacts: loadContacts,
+    audit: loadAuditLogs,
   };
   if (loaders[name]) loaders[name]();
   return false;
@@ -451,7 +506,7 @@ async function loadUsers() {
     allUsers = data.users || [];
     renderUsersTable(allUsers);
   } catch(e) {
-    document.getElementById('usersBody').innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    document.getElementById('usersBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
@@ -468,7 +523,7 @@ function filterUsers() {
 function renderUsersTable(users) {
   const tbody = document.getElementById('usersBody');
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет пользователей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет пользователей</td></tr>';
     return;
   }
   tbody.innerHTML = users.map(u => {
@@ -601,14 +656,14 @@ async function searchLogs() {
     renderLogsTable(currentLogs);
     renderLogsPagination(data.total || 0);
   } catch(e) {
-    document.getElementById('logsBody').innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    document.getElementById('logsBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
 function renderLogsTable(logs) {
   const tbody = document.getElementById('logsBody');
   if (!logs.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет записей</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет записей</td></tr>';
     return;
   }
   tbody.innerHTML = logs.map((log, index) => {
@@ -622,10 +677,13 @@ function renderLogsTable(logs) {
       ? '<span class="tag tag-tg">TG</span>'
       : `<span class="tag tag-max">${log.platform}</span>`;
     const msg = escapeHtml(log.message || '').substring(0, 100) + (log.message && log.message.length > 100 ? '...' : '');
+    const userDisplay = log.username
+      ? `<div style="font-weight: 500; font-size: 13px; color: var(--text-primary); margin-bottom: 2px;">${escapeHtml(log.username)}</div><code style="font-size: 10px; color: var(--text-secondary); opacity: 0.85;">${log.session_id}</code>`
+      : `<code style="font-size: 11px">${log.session_id}</code>`;
     return `
       <tr>
         <td style="font-size:11px;white-space:nowrap">${time}</td>
-        <td><code style="font-size:11px">${log.session_id}</code></td>
+        <td>${userDisplay}</td>
         <td>${platformTag}</td>
         <td>${roleTag}</td>
         <td><span class="msg-preview" title="${escapeHtml(log.message||'')}">${msg}</span></td>
@@ -674,11 +732,12 @@ async function loadDocuments() {
   if (grid) grid.innerHTML = '';
 
   try {
-    const data = await apiFetch('/api/documents');
+    const data = await apiFetch(`/api/documents?path=${encodeURIComponent(currentExplorerPath)}`);
     if (!data) return;
     if (loading) loading.classList.add('hidden');
 
-    allDocuments = data.documents || [];
+    allDocuments = data.items || [];
+    renderBreadcrumbs(data.breadcrumbs || []);
     buildDocFilterTabs();
     renderDocuments();
     checkPendingChanges();
@@ -687,42 +746,30 @@ async function loadDocuments() {
   }
 }
 
-function buildDocFilterTabs() {
-  const container = document.getElementById('docCompanyFilterTabs');
+function renderBreadcrumbs(crumbs) {
+  const container = document.getElementById('explorerBreadcrumbs');
   if (!container) return;
   
-  const userCompany = currentUser.company_id;
-  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
-  
-  if (isRestricted) {
-    const companyName = COMPANIES[userCompany] || userCompany;
-    const count = allDocuments.filter(doc => doc.company === userCompany).length;
-    
-    container.innerHTML = `
-      <button class="tab active" onclick="filterDocsByCompany('${userCompany}', this)">
-        ${companyName.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})
-      </button>
+  container.innerHTML = crumbs.map((crumb, idx) => {
+    const isLast = idx === crumbs.length - 1;
+    if (isLast) {
+      return `<span style="color: var(--text-normal); font-weight: 600;">${escapeHtml(crumb.name)}</span>`;
+    }
+    return `
+      <span class="breadcrumb-item" style="cursor: pointer; text-decoration: underline; color: var(--accent);" onclick="navigateExplorer('${escapeHtml(crumb.path)}')">${escapeHtml(crumb.name)}</span>
+      <span style="opacity: 0.5; margin: 0 4px;">/</span>
     `;
-    currentCompanyFilter = userCompany;
-    return;
-  }
-  
-  const commonCount = allDocuments.filter(doc => !doc.company).length;
-  
-  container.innerHTML = `
-    <button class="tab ${currentCompanyFilter === 'all' ? 'active' : ''}" onclick="filterDocsByCompany('all', this)">🌍 Все документы (${allDocuments.length})</button>
-    <button class="tab ${currentCompanyFilter === 'common' ? 'active' : ''}" onclick="filterDocsByCompany('common', this)">📁 Общие (${commonCount})</button>
-  `;
-  
-  Object.entries(COMPANIES).forEach(([id, name]) => {
-    const count = allDocuments.filter(doc => doc.company === id).length;
-    
-    const btn = document.createElement('button');
-    btn.className = `tab ${currentCompanyFilter === id ? 'active' : ''}`;
-    btn.textContent = `${name.replace('АО ', '').replace('ООО ', '').replace('\"', '').replace('\"', '')} (${count})`;
-    btn.onclick = (e) => filterDocsByCompany(id, btn);
-    container.appendChild(btn);
-  });
+  }).join('');
+}
+
+window.navigateExplorer = function(path) {
+  currentExplorerPath = path;
+  loadDocuments();
+};
+
+function buildDocFilterTabs() {
+  const container = document.getElementById('docCompanyFilterTabs');
+  if (container) container.classList.add('hidden');
 }
 
 function filterDocsByCompany(companyId, btnEl) {
@@ -742,14 +789,9 @@ function renderDocuments() {
   if (!grid) return;
   
   let docs = allDocuments;
-  if (currentCompanyFilter === 'common') {
-    docs = allDocuments.filter(doc => !doc.company);
-  } else if (currentCompanyFilter !== 'all') {
-    docs = allDocuments.filter(doc => doc.company === currentCompanyFilter);
-  }
   
   if (!docs.length) {
-    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);grid-column: 1 / -1;">Документы в этом разделе отсутствуют</div>';
+    grid.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);grid-column: 1 / -1;">Папка пуста</div>';
     return;
   }
   
@@ -757,32 +799,54 @@ function renderDocuments() {
   const canDelete = hasPerm('delete_documents');
   
   grid.innerHTML = docs.map(doc => {
-    const isCommon = !doc.company;
+    if (doc.is_dir) {
+      return `
+        <div class="doc-card folder-card" style="cursor: pointer; border-color: rgba(255,255,255,0.1); transition: transform 0.2s, border-color 0.2s;" onclick="navigateExplorer('${escapeHtml(doc.path)}')" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <span class="company-badge common">${escapeHtml(doc.company_name || 'Папка')}</span>
+          </div>
+          <div class="doc-name" style="font-weight: 600; color: var(--accent); font-size: 15px;">📁 ${escapeHtml(doc.name)}</div>
+          <div class="doc-meta" style="font-size:12px;color:var(--text-muted); margin-top: 4px;">Файлов: ${doc.files_count !== undefined ? doc.files_count : 0}</div>
+          <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
+        </div>
+      `;
+    }
+    
     const size = doc.size < 1024 ? `${doc.size} B` : doc.size < 1048576 ? `${(doc.size/1024).toFixed(1)} KB` : `${(doc.size/1048576).toFixed(1)} MB`;
     const modified = doc.modified ? new Date(doc.modified * 1000).toLocaleDateString('ru') : '';
+    const firstSegment = doc.path.split('/')[0];
+    
     return `
       <div class="doc-card">
         <div>
-          <span class="company-badge ${isCommon?'common':''}">${doc.company_name}</span>
+          <span class="company-badge">${escapeHtml(doc.company_name)}</span>
+          ${doc.status === 'pending' ? '<span class="status-badge" style="background:#f59e0b; color:#fff; font-size:10px; margin-left:8px; padding:2px 6px; border-radius:4px; font-weight: 500;">На модерации</span>' : ''}
         </div>
-        <div class="doc-name">📄 ${doc.name}</div>
+        <div class="doc-name">📄 ${escapeHtml(doc.name)}</div>
         ${doc.title ? `<div class="doc-title" style="font-size: 13px; color: var(--accent); font-weight: 500; margin-top: -2px;">${escapeHtml(doc.title)}</div>` : ''}
         <div class="doc-meta">${size} · ${modified}</div>
-        <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${doc.path}</div>
+        <div class="doc-meta" style="font-size:11px;color:var(--text-muted)">${escapeHtml(doc.path)}</div>
         <div class="doc-actions">
-          <button class="btn btn-secondary" onclick="viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
+          ${(doc.status === 'pending' && currentUser.role === 'superadmin') ? `
+          <button class="btn btn-success" onclick="event.stopPropagation(); approveDocument('${escapeHtml(doc.path)}')">
+            <span>✓</span><span>Одобрить</span>
+          </button>` : ''}
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); viewDocumentContent('${escapeHtml(doc.path)}')" title="Посмотреть">
             <span>👁</span><span>Посмотреть</span>
           </button>
           ${canEdit ? `
-          <button class="btn btn-secondary" onclick="editDocument('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Изменить">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); showVersionsModal('${escapeHtml(doc.path)}')">
+            <span>🔄</span><span>Версии</span>
+          </button>
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); editDocument('${escapeHtml(doc.path)}', '${firstSegment}')" title="Изменить">
             <span>✏️</span><span>Изменить</span>
           </button>
-          <button class="btn btn-secondary" onclick="showMoveDocModal('${escapeHtml(doc.path)}', '${doc.company || ''}')" title="Перенести">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); showMoveDocModal('${escapeHtml(doc.path)}', '${firstSegment}')" title="Перенести">
             <span>📦</span><span>Перенести</span>
           </button>
           ` : ''}
           ${canDelete ? `
-          <button class="btn btn-danger" onclick="deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
+          <button class="btn btn-danger" onclick="event.stopPropagation(); deleteDocument('${escapeHtml(doc.path)}')" title="Удалить">
             <span>🗑</span><span>Удалить</span>
           </button>
           ` : ''}
@@ -793,64 +857,34 @@ function renderDocuments() {
 
 function showDocUpload() {
   document.getElementById('docUploadPanel').classList.remove('hidden');
-  document.getElementById('docPreviewSection').classList.add('hidden');
+  document.getElementById('docAiResultSection').classList.add('hidden');
   
-  const container = document.getElementById('docCompaniesContainer');
-  if (!container) return;
-  
-  container.innerHTML = '';
-  
-  const userCompany = currentUser.company_id;
-  const isRestricted = currentUser.role !== 'superadmin' && userCompany && userCompany !== 'all';
-  
-  // Чекбокс "Общие документы"
-  const commonItem = document.createElement('label');
-  commonItem.className = 'permission-item';
-  
-  const commonCheckbox = document.createElement('input');
-  commonCheckbox.type = 'checkbox';
-  commonCheckbox.name = 'docCompanies';
-  commonCheckbox.value = 'common';
-  
-  if (isRestricted) {
-    commonCheckbox.disabled = true;
-  } else if (currentCompanyFilter === 'common') {
-    commonCheckbox.checked = true;
+  // Clear inputs
+  document.getElementById('docTitleDraft').value = '';
+  document.getElementById('docTextContent').value = '';
+  document.getElementById('aiLastUpdated').value = '';
+  document.getElementById('fileInput').value = '';
+  document.getElementById('selectedFile').classList.add('hidden');
+  document.getElementById('selectedFile').textContent = '';
+  selectedFile = null;
+
+  // Автозаполнение по текущему пути проводника
+  const parts = currentExplorerPath ? currentExplorerPath.split('/') : [];
+  const orgSelect = document.getElementById('uploadOrganization');
+  const catSelect = document.getElementById('uploadCategory');
+
+  if (parts.length > 0 && parts[0]) {
+    const orgValue = parts[0] === 'common' ? 'shared' : parts[0];
+    orgSelect.value = orgValue;
+  } else {
+    orgSelect.selectedIndex = 0; // Дефолт (Общие)
   }
-  
-  const commonSpan = document.createElement('span');
-  commonSpan.textContent = '📁 Общие документы';
-  commonItem.appendChild(commonCheckbox);
-  commonItem.appendChild(commonSpan);
-  container.appendChild(commonItem);
-  
-  // Чекбоксы для остальных компаний
-  Object.entries(COMPANIES).forEach(([id, name]) => {
-    const item = document.createElement('label');
-    item.className = 'permission-item';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.name = 'docCompanies';
-    checkbox.value = id;
-    
-    if (isRestricted) {
-      if (id === userCompany) {
-        checkbox.checked = true;
-      }
-      checkbox.disabled = true;
-    } else {
-      if (currentCompanyFilter === id) {
-        checkbox.checked = true;
-      }
-    }
-    
-    const span = document.createElement('span');
-    span.textContent = name;
-    item.appendChild(checkbox);
-    item.appendChild(span);
-    container.appendChild(item);
-  });
+
+  if (parts.length > 1 && parts[1]) {
+    catSelect.value = parts[1];
+  } else {
+    catSelect.selectedIndex = 0; // Дефолт (Кадры)
+  }
 }
 
 function hideDocUpload() {
@@ -887,102 +921,296 @@ function handleDrop(e) {
   }
 }
 
-async function previewDocument() {
-  const btn = document.getElementById('previewBtn');
+async function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+async function processDocThroughAI() {
+  const btn = document.getElementById('aiProcessBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Обрабатываю...';
 
   try {
-    const formData = new FormData();
-    const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
-    const companyIds = Array.from(checkboxes).map(cb => cb.value);
-    
-    if (companyIds.length === 0) {
-      toast('Выберите хотя бы одну организацию для публикации', 'error');
-      btn.disabled = false;
-      btn.textContent = '🔍 Обработать через ИИ';
-      return;
-    }
+    const draftTitle = document.getElementById('docTitleDraft').value;
+    const organization = document.getElementById('uploadOrganization').value;
+    const category = document.getElementById('uploadCategory').value;
 
-    const title = document.getElementById('docTitle').value;
-
+    let text = '';
     if (docMode === 'file' && selectedFile) {
-      formData.append('file', selectedFile);
+      text = await readFileAsText(selectedFile);
     } else if (docMode === 'text') {
-      const text = document.getElementById('docTextContent').value;
-      if (!text.trim()) { toast('Введите текст', 'error'); return; }
-      formData.append('text_content', text);
-    } else {
-      toast('Выберите файл или введите текст', 'error');
+      text = document.getElementById('docTextContent').value;
+    }
+
+    if (!text.trim()) {
+      toast('Введите текст или выберите файл', 'error');
+      btn.disabled = false;
+      btn.textContent = '🤖 Обработать через ИИ';
       return;
     }
-    
-    // Передаем список выбранных компаний
-    formData.append('company_ids', companyIds.join(','));
-    // Передаем первую компанию для генерации превью по умолчанию
-    const primaryCompany = companyIds[0] === 'common' ? '' : companyIds[0];
-    if (primaryCompany) {
-      formData.append('company_id', primaryCompany);
-    }
-    if (title) formData.append('doc_title', title);
 
-    const res = await fetch('/api/documents/preview', {
+    const payload = {
+      text: text,
+      draft_title: draftTitle,
+      organization: organization,
+      category: category
+    };
+
+    const res = await fetch('/api/generate_metadata', {
       method: 'POST',
-      credentials: 'include',
-      body: formData,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
+
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Ошибка обработки');
+      const err = await res.json().catch(() => ({error: 'Ошибка при вызове ИИ'}));
+      throw new Error(err.error || 'Ошибка при вызове ИИ');
     }
+
     const data = await res.json();
 
-    document.getElementById('docPreview').value = data.preview || '';
-    document.getElementById('docFilename').value = data.suggested_filename || 'document.md';
-    document.getElementById('docPreviewSection').classList.remove('hidden');
-    document.getElementById('saveResult').classList.add('hidden');
-    toast('ИИ обработал документ. Проверьте и отредактируйте.', 'info');
-  } catch(e) {
-    toast('Ошибка: ' + e.message, 'error');
+    // Populate AI fields
+    document.getElementById('aiTitle').value = data.title || '';
+    document.getElementById('aiDescription').value = data.description || '';
+    document.getElementById('aiFilename').value = data.file_name || '';
+    
+    if (Array.isArray(data.tags)) {
+      document.getElementById('aiTags').value = data.tags.join(', ');
+    } else {
+      document.getElementById('aiTags').value = data.tags || '';
+    }
+
+    if (Array.isArray(data.questions_answered)) {
+      document.getElementById('aiQuestions').value = data.questions_answered.join('\n');
+    } else {
+      document.getElementById('aiQuestions').value = data.questions_answered || '';
+    }
+
+    document.getElementById('docAiResultSection').classList.remove('hidden');
+    document.getElementById('docAiResultSection').scrollIntoView({ behavior: 'smooth' });
+    toast('Разметка ИИ получена. Отредактируйте при необходимости.', 'success');
+
+  } catch (e) {
+    toast('Ошибка обработки: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔍 Обработать через ИИ';
+    btn.textContent = '🤖 Обработать через ИИ';
   }
 }
 
-async function saveDocument() {
-  const content = document.getElementById('docPreview').value;
-  const filename = document.getElementById('docFilename').value;
+async function finalUploadDocument() {
+  const organization = document.getElementById('uploadOrganization').value;
+  const category = document.getElementById('uploadCategory').value;
   
-  const checkboxes = document.querySelectorAll('input[name="docCompanies"]:checked');
-  const company_ids = Array.from(checkboxes).map(cb => cb.value);
+  const title = document.getElementById('aiTitle').value;
+  const description = document.getElementById('aiDescription').value;
+  const file_name = document.getElementById('aiFilename').value;
+  const tagsStr = document.getElementById('aiTags').value;
+  const questionsStr = document.getElementById('aiQuestions').value;
+  const last_updated = document.getElementById('aiLastUpdated').value;
 
-  if (company_ids.length === 0) {
-    toast('Выберите хотя бы одну организацию для публикации', 'error');
+  let text = '';
+  if (docMode === 'file' && selectedFile) {
+    text = await readFileAsText(selectedFile);
+  } else if (docMode === 'text') {
+    text = document.getElementById('docTextContent').value;
+  }
+
+  if (!text.trim()) {
+    toast('Текст документа пустой', 'error');
     return;
   }
-  if (!content.trim()) { toast('Содержимое пустое', 'error'); return; }
+
+  // Parse tags and questions
+  const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
+  const questions_answered = questionsStr.split('\n').map(q => q.trim()).filter(q => q);
+
+  const payload = {
+    text,
+    organization,
+    category,
+    title,
+    description,
+    file_name,
+    tags,
+    questions_answered,
+    last_updated: last_updated || null
+  };
+
+  const msgEl = document.getElementById('uploadResultMsg');
+  msgEl.className = 'hint';
+  msgEl.textContent = 'Сохраняю...';
+  msgEl.classList.remove('hidden');
 
   try {
-    const data = await apiFetch('/api/documents/save', {
+    const res = await fetch('/upload', {
       method: 'POST',
-      body: JSON.stringify({content, filename, company_ids}),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
-    const el = document.getElementById('saveResult');
-    el.textContent = data.message;
-    el.className = 'success';
-    el.classList.remove('hidden');
-    toast('Документ сохранён!', 'success');
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({error: 'Ошибка при сохранении'}));
+      throw new Error(err.error || 'Ошибка при сохранении');
+    }
+
+    msgEl.textContent = 'Документ успешно сохранен на диск!';
+    msgEl.className = 'hint success';
+    toast('Документ сохранен!', 'success');
+
     setTimeout(async () => {
+      hideDocUpload();
       await loadDocuments();
     }, 2000);
-  } catch(e) {
-    const el = document.getElementById('saveResult');
-    el.textContent = 'Ошибка: ' + e.message;
-    el.className = 'error';
-    el.classList.remove('hidden');
+
+  } catch (e) {
+    msgEl.textContent = 'Ошибка: ' + e.message;
+    msgEl.className = 'hint error';
+    toast('Не удалось сохранить документ: ' + e.message, 'error');
   }
 }
+
+async function approveDocument(path) {
+  if (!confirm(`Одобрить документ "${path}"?`)) return;
+  try {
+    await apiFetch('/api/documents/approve', {
+      method: 'POST',
+      body: JSON.stringify({path}),
+    });
+    toast('Документ одобрен', 'success');
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function showVersionsModal(path) {
+  openModal(
+    'История версий',
+    '<div class="loading-cell">Загрузка версий...</div>',
+    '<button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>',
+    true
+  );
+  try {
+    const data = await apiFetch(`/api/documents/versions?path=${encodeURIComponent(path)}`);
+    if (!data || !data.versions || data.versions.length === 0) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Версии не найдены</div>';
+      return;
+    }
+    
+    const bodyHtml = `
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr><th>Дата</th><th>Размер</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            ${data.versions.map(v => `
+              <tr>
+                <td>${new Date(v.timestamp * 1000).toLocaleString('ru')}</td>
+                <td>${(v.size / 1024).toFixed(1)} KB</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" onclick="restoreVersion('${path}', '${v.path}')">Восстановить</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function restoreVersion(originalPath, versionPath) {
+  if (!confirm('Текущая версия файла будет перезаписана (и сохранена в историю). Продолжить?')) return;
+  try {
+    await apiFetch('/api/documents/versions/restore', {
+      method: 'POST',
+      body: JSON.stringify({original_path: originalPath, version_path: versionPath}),
+    });
+    toast('Версия восстановлена', 'success');
+    closeModal();
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function showTrashModal() {
+  openModal(
+    'Корзина',
+    '<div class="loading-cell">Загрузка...</div>',
+    `
+    <button class="btn btn-ghost" onclick="closeModal()">Закрыть</button>
+    <button class="btn btn-danger" onclick="emptyTrash()">Очистить корзину</button>
+    `,
+    true
+  );
+  try {
+    const data = await apiFetch('/api/documents/trash');
+    if (!data || !data.items || data.items.length === 0) {
+      document.getElementById('modalBody').innerHTML = '<div style="padding:20px;text-align:center;">Корзина пуста</div>';
+      return;
+    }
+    
+    const bodyHtml = `
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr><th>Имя</th><th>Оригинальный путь</th><th>Удален</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            ${data.items.map(item => `
+              <tr>
+                <td>${escapeHtml(item.name)}</td>
+                <td><span style="font-size:11px">${escapeHtml(item.original_path)}</span></td>
+                <td>${new Date(item.deleted_at * 1000).toLocaleString('ru')}</td>
+                <td>
+                  <button class="btn btn-secondary btn-sm" onclick="restoreFromTrash('${item.path}')">Восстановить</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger)">Ошибка: ${e.message}</div>`;
+  }
+}
+
+async function restoreFromTrash(path) {
+  try {
+    await apiFetch('/api/documents/trash/restore', {
+      method: 'POST',
+      body: JSON.stringify({path}),
+    });
+    toast('Файл восстановлен', 'success');
+    showTrashModal();
+    await loadDocuments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function emptyTrash() {
+  if (!confirm('Вы уверены, что хотите навсегда очистить корзину?')) return;
+  try {
+    await apiFetch('/api/documents/trash/empty', {
+      method: 'DELETE'
+    });
+    toast('Корзина очищена', 'success');
+    closeModal();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
 
 async function deleteDocument(path) {
   if (!confirm(`Удалить документ "${path}"?\nПереиндексация потребуется.`)) return;
@@ -1092,22 +1320,84 @@ async function editDocument(path, companyId) {
       if (tabTextBtn) switchDocTab('text', tabTextBtn);
     }
 
-    // Заполняем поля формы
-    const checkboxes = document.querySelectorAll('input[name="docCompanies"]');
-    checkboxes.forEach(cb => {
-      const targetVal = companyId || 'common';
-      cb.checked = (cb.value === targetVal);
-    });
-    
-    const filename = path.split('/').pop();
-    document.getElementById('docTitle').value = filename.replace('.md', '');
-    document.getElementById('docTextContent').value = data.content;
+    // Разбираем путь
+    const parts = path.split('/');
+    const org = parts[0] || 'shared';
+    const cat = parts[1] || 'routine';
+    const filename = parts[parts.length - 1] || 'document.md';
 
-    // Показываем секцию превью с контентом для сохранения
-    document.getElementById('docPreview').value = data.content;
-    document.getElementById('docFilename').value = filename;
-    document.getElementById('docPreviewSection').classList.remove('hidden');
-    document.getElementById('saveResult').classList.add('hidden');
+    document.getElementById('uploadOrganization').value = org;
+    document.getElementById('uploadCategory').value = cat;
+    document.getElementById('docTitleDraft').value = filename.replace('.md', '').replace(/_/g, ' ');
+
+    let text = data.content;
+    let title = filename.replace('.md', '');
+    let description = '';
+    let tags = '';
+    let questions = '';
+    let lastUpdated = '';
+    
+    const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+    if (match) {
+      const yamlStr = match[1];
+      text = text.substring(match[0].length).trim();
+      
+      const yamlLines = yamlStr.split('\n');
+      let inQuestions = false;
+      let qList = [];
+      
+      for (let line of yamlLines) {
+        line = line.trim();
+        if (!line) continue;
+        
+        if (line.startsWith('questions_answered:')) {
+          inQuestions = true;
+          const inlineMatch = line.match(/questions_answered:\s*\[(.*)\]/);
+          if (inlineMatch) {
+            qList = inlineMatch[1].split(',').map(x => x.trim().replace(/^["']|["']$/g, ''));
+            inQuestions = false;
+          }
+          continue;
+        }
+        
+        if (inQuestions) {
+          if (line.startsWith('-')) {
+            qList.push(line.substring(1).trim().replace(/^["']|["']$/g, ''));
+            continue;
+          } else if (line.includes(':')) {
+            inQuestions = false;
+          }
+        }
+        
+        if (line.startsWith('title:')) {
+          title = line.substring(6).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('description:')) {
+          description = line.substring(12).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('last_updated:')) {
+          lastUpdated = line.substring(13).trim().replace(/^["']|["']$/g, '');
+        } else if (line.startsWith('tags:')) {
+          const tagsMatch = line.match(/tags:\s*\[(.*)\]/);
+          if (tagsMatch) {
+            tags = tagsMatch[1].split(',').map(x => x.trim().replace(/^["']|["']$/g, '')).join(', ');
+          } else {
+            tags = line.substring(5).trim().replace(/^["']|["']$/g, '');
+          }
+        }
+      }
+      if (qList.length > 0) {
+        questions = qList.join('\n');
+      }
+    }
+
+    document.getElementById('docTextContent').value = text;
+    document.getElementById('aiTitle').value = title;
+    document.getElementById('aiDescription').value = description;
+    document.getElementById('aiFilename').value = filename;
+    document.getElementById('aiTags').value = tags;
+    document.getElementById('aiQuestions').value = questions;
+    document.getElementById('aiLastUpdated').value = lastUpdated;
+
+    document.getElementById('docAiResultSection').classList.remove('hidden');
 
     // Скроллим к форме
     document.getElementById('docUploadPanel').scrollIntoView({ behavior: 'smooth' });
@@ -1336,12 +1626,13 @@ function showLogDetailModal(index) {
     `;
   }
 
+  const userText = log.username ? `${log.username} (${log.session_id})` : log.session_id;
   const bodyHtml = `
     <div class="detail-view">
       <div style="display: flex; gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 12px;">
         <div><span class="detail-label">Время:</span> ${time}</div>
         <div><span class="detail-label">Платформа:</span> ${platformTag}</div>
-        <div><span class="detail-label">Пользователь:</span> <code style="font-size:12px;">${log.session_id}</code></div>
+        <div><span class="detail-label">Пользователь:</span> <code style="font-size:12px;">${userText}</code></div>
       </div>
       <div class="detail-row">
         <span class="detail-label">Текст сообщения (${log.role === 'user' ? 'Пользователь' : 'Ассистент'})</span>
@@ -1480,7 +1771,7 @@ let allAdmins = [];
 
 async function loadAdmins() {
   const tbody = document.getElementById('adminsBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>';
   
   try {
     const data = await apiFetch('/api/admin/users');
@@ -1488,7 +1779,7 @@ async function loadAdmins() {
     allAdmins = data.users || [];
     renderAdminsTable(allAdmins);
   } catch(e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
   }
 }
 
@@ -1496,7 +1787,7 @@ function renderAdminsTable(admins) {
   const tbody = document.getElementById('adminsBody');
   if (!tbody) return;
   if (!admins.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Нет администраторов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет администраторов</td></tr>';
     return;
   }
   
@@ -1558,7 +1849,8 @@ function showAdminModal(adminId = null) {
   const title = admin ? `Редактирование администратора: ${admin.username}` : 'Создание нового администратора';
   
   const roleOptions = `
-    <option value="admin" ${admin && admin.role !== 'superadmin' ? 'selected' : ''}>Администратор организации</option>
+    <option value="viewer" ${admin && admin.role === 'viewer' ? 'selected' : ''}>Только чтение (Справочник)</option>
+    <option value="admin" ${admin && admin.role !== 'superadmin' && admin?.role !== 'viewer' ? 'selected' : ''}>Администратор организации</option>
     <option value="superadmin" ${admin && admin.role === 'superadmin' ? 'selected' : ''}>Суперадминистратор (полный доступ)</option>
   `;
   
@@ -1682,7 +1974,7 @@ function toggleAdminRoleFields() {
   const companyGroup = document.getElementById('adminCompanyGroup');
   const permsGroup = document.getElementById('adminPermissionsGroup');
   
-  if (role === 'superadmin') {
+  if (role === 'superadmin' || role === 'viewer') {
     if (companyGroup) companyGroup.style.display = 'none';
     if (permsGroup) permsGroup.style.display = 'none';
   } else {
@@ -1708,7 +2000,13 @@ async function saveAdmin(e, adminId = null) {
   let company_id = ['all'];
   let permissions = [];
   
-  if (role !== 'superadmin') {
+  if (role === 'superadmin') {
+    permissions = Object.keys(PERMISSION_NAMES);
+    company_id = ['all'];
+  } else if (role === 'viewer') {
+    permissions = [];
+    company_id = ['all'];
+  } else {
     const checkedCompanies = document.querySelectorAll('input[name="adminCompanies"]:checked');
     const companyIds = Array.from(checkedCompanies).map(cb => cb.value);
     
@@ -1723,8 +2021,6 @@ async function saveAdmin(e, adminId = null) {
     
     const checkedBoxes = document.querySelectorAll('input[name="permissions"]:checked');
     permissions = Array.from(checkedBoxes).map(cb => cb.value);
-  } else {
-    permissions = Object.keys(PERMISSION_NAMES);
   }
   
   const payload = {
@@ -1773,6 +2069,53 @@ async function deleteAdmin(adminId, username) {
   }
 }
 
+window.showCreateFolderModal = function() {
+  const userCompanyIds = currentUser.company_ids || [];
+  const isSuper = currentUser.role === 'superadmin' || userCompanyIds.includes('all');
+  
+  if (!currentExplorerPath && !isSuper) {
+    toast('Пожалуйста, выберите папку организации для создания подпапки', 'error');
+    return;
+  }
+  
+  const bodyHtml = `
+    <div class="form-group">
+      <label>Название новой папки</label>
+      <input type="text" class="text-input" id="newFolderName" placeholder="Например: policies">
+    </div>
+  `;
+  openModal(
+    'Создать папку',
+    bodyHtml,
+    `
+      <button class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+      <button class="btn btn-primary" onclick="submitCreateFolder()">📁 Создать</button>
+    `
+  );
+};
+
+window.submitCreateFolder = async function() {
+  const name = document.getElementById('newFolderName').value.trim();
+  if (!name) {
+    toast('Введите имя папки', 'error');
+    return;
+  }
+  
+  const targetPath = currentExplorerPath ? `${currentExplorerPath}/${name}` : name;
+  
+  try {
+    await apiFetch('/api/documents/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path: targetPath })
+    });
+    toast('Папка создана!', 'success');
+    closeModal();
+    loadDocuments();
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'error');
+  }
+};
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -1794,3 +2137,270 @@ async function deleteAdmin(adminId, username) {
     if (currentPage === 'dashboard') loadDashboard();
   }, 60000);
 })();
+// ── Contacts ──────────────────────────────────────────────────────────────
+
+let allContacts = [];
+let contactsOffset = 0;
+let contactsPageSize = 50;
+
+window.changeContactsPageSize = function() {
+    const select = document.getElementById('contactsPageSizeSelect');
+    if (select) {
+        contactsPageSize = parseInt(select.value, 10);
+        contactsOffset = 0;
+        fetchContacts();
+    }
+};
+
+window.loadContacts = async function() {
+  contactsOffset = 0;
+  await fetchContacts();
+  await checkSyncStatus();
+}
+
+window.fetchContacts = async function() {
+  const search = document.getElementById('contactSearch')?.value || '';
+  const params = new URLSearchParams({limit: contactsPageSize, offset: contactsOffset});
+  if (search) params.set('search', search);
+
+  try {
+    const data = await apiFetch(`/api/contacts?${params}`);
+    if (!data) return;
+    allContacts = data.contacts || [];
+    renderContactsTable(allContacts);
+    renderContactsPagination(data.total || 0);
+  } catch(e) {
+    document.getElementById('contactsBody').innerHTML = `<tr><td colspan="7" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+window.filterContacts = function() {
+  contactsOffset = 0;
+  fetchContacts();
+}
+
+window.renderContactsTable = function(contacts) {
+  const tbody = document.getElementById('contactsBody');
+  if (!contacts.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-cell">Нет контактов</td></tr>';
+    return;
+  }
+  const canEdit = hasPerm('edit_contacts');
+  tbody.innerHTML = contacts.map(c => {
+    let actionsHtml = '';
+    if (canEdit) {
+      actionsHtml = `
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-ghost btn-sm" onclick='showContactModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>✏️</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteContact(${c.id})">🗑</button>
+          </div>
+        </td>`;
+    }
+    return `
+      <tr>
+                <td style="font-weight: 500;">${escapeHtml(c.full_name)}</td>
+        <td>${escapeHtml(c.position || '')}</td>
+        <td>${escapeHtml(c.department || '')}</td>
+        <td>${escapeHtml(c.company || '')}</td>
+        <td><code>${escapeHtml(c.phone || '')}</code></td>
+          <td>${escapeHtml(c.email || '')}</td>
+        ${actionsHtml}
+      </tr>`;
+  }).join('');
+}
+
+window.renderContactsPagination = function(total) {
+  const pages = Math.ceil(total / contactsPageSize);
+  const current = Math.floor(contactsOffset / contactsPageSize);
+  const el = document.getElementById('contactsPagination');
+  if (!el || pages <= 1) { if(el) el.innerHTML=''; return; }
+
+  let html = `<span>${total} записей</span>`;
+  html += `<button class="page-btn" onclick="contactsGoPage(${Math.max(0,current-1)})">‹</button>`;
+  for (let i = Math.max(0, current-2); i <= Math.min(pages-1, current+2); i++) {
+    html += `<button class="page-btn ${i===current?'active':''}" onclick="contactsGoPage(${i})">${i+1}</button>`;
+  }
+  html += `<button class="page-btn" onclick="contactsGoPage(${Math.min(pages-1,current+1)})">›</button>`;
+  el.innerHTML = html;
+}
+
+window.contactsGoPage = function(page) {
+  contactsOffset = page * contactsPageSize;
+  fetchContacts();
+  // Перематываем наверх
+  const tableContainer = document.querySelector('#pageContacts .card');
+  if (tableContainer) {
+      tableContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+window.showContactModal = function(contact = null) {
+  const isEdit = !!contact;
+  const title = isEdit ? 'Изменить контакт' : 'Добавить контакт';
+  
+  const c = contact || { full_name: '', position: '', department: '', company: '', phone: '', email: '' };
+
+  const bodyHtml = `
+    <div class="form-vertical">
+      <div class="form-group">
+        <label>ФИО</label>
+        <input type="text" class="text-input" id="contactName" value="${escapeHtml(c.full_name)}" required>
+      </div>
+      <div class="form-group">
+        <label>Должность</label>
+        <input type="text" class="text-input" id="contactPos" value="${escapeHtml(c.position)}" required>
+      </div>
+      <div class="form-group">
+        <label>Отдел</label>
+        <input type="text" class="text-input" id="contactDept" value="${escapeHtml(c.department)}" required>
+      </div>
+      <div class="form-group">
+        <label>Предприятие</label>
+        <input type="text" class="text-input" id="contactComp" value="${escapeHtml(c.company)}" required>
+      </div>
+      <div class="form-group">
+        <label>Телефон (вн.)</label>
+        <input type="text" class="text-input" id="contactPhone" value="${escapeHtml(c.phone)}" required>
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" class="text-input" id="contactEmail" value="${escapeHtml(c.email)}">
+      </div>
+    </div>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-ghost" onclick="closeModal()">Отмена</button>
+    <button class="btn btn-primary" onclick="saveContact(${isEdit ? c.id : 'null'})">Сохранить</button>
+  `;
+
+  openModal(title, bodyHtml, footerHtml, false);
+}
+
+window.saveContact = async function(id) {
+  const payload = {
+    full_name: document.getElementById('contactName').value.trim(),
+    position: document.getElementById('contactPos').value.trim(),
+    department: document.getElementById('contactDept').value.trim(),
+    company: document.getElementById('contactComp').value.trim(),
+    phone: document.getElementById('contactPhone').value.trim(),
+    email: document.getElementById('contactEmail').value.trim()
+  };
+
+  if (!payload.full_name || !payload.phone) {
+    toast('ФИО и телефон обязательны', 'error');
+    return;
+  }
+
+  try {
+    const url = id ? `/api/contacts/${id}` : '/api/contacts';
+    const method = id ? 'PUT' : 'POST';
+    
+    await apiFetch(url, {
+      method: method,
+      body: JSON.stringify(payload)
+    });
+    
+    toast('Контакт сохранен. Изменения применятся ночью (в 3:00)', 'success');
+    closeModal();
+    loadContacts();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+window.deleteContact = async function(id) {
+  if (!confirm('Вы уверены, что хотите удалить этот контакт?')) return;
+  
+  try {
+    await apiFetch(`/api/contacts/${id}`, { method: 'DELETE' });
+    toast('Контакт удален. Изменения применятся ночью (в 3:00)', 'success');
+    loadContacts();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+window.checkSyncStatus = async function() {
+  if (currentUser.role !== 'superadmin') return;
+  try {
+    const res = await apiFetch('/api/contacts/sync_status');
+    const btn = document.getElementById('btnSyncContacts');
+    if (res && res.pending) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  } catch(e) {}
+}
+
+window.syncContactsNow = async function() {
+  if (!confirm('Запустить полную переиндексацию контактов прямо сейчас?')) return;
+  try {
+    await apiFetch('/api/contacts/sync', { method: 'POST' });
+    toast('Синхронизация запущена в фоне', 'success');
+    document.getElementById('btnSyncContacts').classList.add('hidden');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+window.syncYandexEmails = async function() {
+  if (!confirm('Запустить синхронизацию почт из Яндекс 360?')) return;
+  const btn = document.getElementById('btnSyncYandex');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Синхронизация...';
+  }
+  try {
+    const res = await apiFetch('/api/contacts/sync_yandex', { method: 'POST' });
+    if (res && res.success) {
+      toast(`Синхронизация завершена. Обновлено почт: ${res.updated_count}`, 'success');
+      loadContacts();
+    } else {
+      toast(`Ошибка: ${res ? res.error : 'Неизвестная ошибка'}`, 'error');
+    }
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '📥 Импорт из Яндекс 360';
+    }
+  }
+}
+
+// ── Audit Logs ────────────────────────────────────────────────────────────
+
+let auditOffset = 0;
+
+window.loadAuditLogs = async function() {
+  auditOffset = 0;
+  await fetchAuditLogs();
+}
+
+window.fetchAuditLogs = async function() {
+  const params = new URLSearchParams({limit: PAGE_SIZE, offset: auditOffset});
+  try {
+    const data = await apiFetch(`/api/audit_logs?${params}`);
+    if (!data) return;
+    renderAuditTable(data.logs || []);
+  } catch(e) {
+    document.getElementById('auditBody').innerHTML = `<tr><td colspan="4" class="loading-cell">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+window.renderAuditTable = function(logs) {
+  const tbody = document.getElementById('auditBody');
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="loading-cell">Нет записей</td></tr>';
+    return;
+  }
+  tbody.innerHTML = logs.map(l => {
+    const time = new Date(l.timestamp * 1000).toLocaleString('ru', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return `
+      <tr>
+        <td style="font-size:11px;white-space:nowrap">${time}</td>
+        <td style="font-weight:500">${escapeHtml(l.admin_username)}</td>
+        <td><span class="tag">${escapeHtml(l.action)}</span></td>
+        <td style="font-size:13px">${escapeHtml(l.details || '')}</td>
+      </tr>`;
+  }).join('');
+}

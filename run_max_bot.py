@@ -5,9 +5,13 @@
     uv run run_max_bot.py
 """
 import asyncio
+import sys
 import logging
 import os
 import warnings
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from dotenv import load_dotenv
 

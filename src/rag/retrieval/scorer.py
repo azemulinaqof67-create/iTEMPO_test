@@ -1,20 +1,20 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # Словарь для нормализации аббревиатур при поиске имен файлов
 ACRONYM_MAP = {
-    "абк": "abk", 
-    "итз": "itz", 
-    "кмк": "kmk", 
-    "тэмпо": "tempo", 
+    "абк": "abk",
+    "итз": "itz",
+    "кмк": "kmk",
+    "тэмпо": "tempo",
     "цхп": "chp",
     "нтз": "ntz",
     "кзмк": "kzmk",
     "зтэо": "zteo",
     "птфк": "technotron",
-    "технотрон": "technotron"
+    "технотрон": "technotron",
 }
 
 
@@ -26,7 +26,7 @@ class BusinessLogicScorer:
         Начисляет бонусы к результатам поиска и сортирует их по итоговому score.
         """
         query_lower = query.lower()
-        
+
         # 1. Определение целевого предприятия из запроса
         target_company_id = company_id
         if company_id:
@@ -41,7 +41,7 @@ class BusinessLogicScorer:
                 "td": ["тд", "торговый дом"],
                 "it": ["айти", "it"],
                 "sks": ["скс"],
-                "port": ["порт"]
+                "port": ["порт"],
             }
             for cid, keywords in company_keywords.items():
                 if any(kw in query_lower for kw in keywords):
@@ -52,18 +52,18 @@ class BusinessLogicScorer:
         for doc in results:
             # Создаем копию документа, чтобы не мутировать исходные данные
             doc_copy = dict(doc)
-            
+
             # В Qdrant payload может быть вложен в "payload" или находиться прямо в doc.
-            # Наш _vector_search возвращает плоский словарь со всеми необходимыми полями, 
+            # Наш _vector_search возвращает плоский словарь со всеми необходимыми полями,
             # но на всякий случай поддержим оба варианта.
             payload = doc_copy.get("payload") if isinstance(doc_copy.get("payload"), dict) else doc_copy
-            
+
             source = payload.get("source", "").lower().replace("\\", "/")
             doc_text = (payload.get("original_text") or payload.get("text", "")).lower()
             doc_type = payload.get("doc_type", "")
             company_tag = payload.get("company_tag", "")
             filename_clean = payload.get("filename_clean", "")
-            
+
             bonus = 0.0
             if not source:
                 continue
@@ -72,7 +72,7 @@ class BusinessLogicScorer:
             metadata = dict(payload.get("metadata", {}))
             system_hints = list(metadata.get("system_hints", []))
             metadata["system_hints"] = system_hints
-            
+
             # Обновляем метаданные в копии документа
             if "metadata" in doc_copy:
                 doc_copy["metadata"] = metadata
@@ -81,19 +81,19 @@ class BusinessLogicScorer:
                 doc_copy["payload"]["metadata"] = metadata
             else:
                 doc_copy["metadata"] = metadata
-                
+
             # ── 1. СМАРТ-ПОИСК ЧИСЕЛ (Без использования регулярных выражений) ──
             # Извлекаем числа длиной до 4 знаков из поискового запроса
             query_tokens = query_lower.split()
             numbers_in_query = [t for t in query_tokens if t.isdigit() and len(t) <= 4]
             has_number_bonus = False
-            
+
             if numbers_in_query:
                 doc_words = doc_text.split()
                 source_words = source.split()
-                
+
                 context_words = {"абк", "abk", "кабинет", "цех", "этаж", "офис", "№", "номер", "корпус", "блок"}
-                
+
                 for num in numbers_in_query:
                     # Вспомогательная функция проверки контекста
                     def check_context(words_list) -> bool:
@@ -108,7 +108,7 @@ class BusinessLogicScorer:
                                         if neighbor in context_words:
                                             return True
                         return False
-                    
+
                     if check_context(doc_words) or check_context(source_words):
                         bonus += 0.15
                         logger.debug(f"🚀 SMART NUMBER BONUS +0.15 for '{num}' in {source}")
@@ -123,25 +123,45 @@ class BusinessLogicScorer:
                 normalized_query = query_lower
                 for cyr, lat in ACRONYM_MAP.items():
                     normalized_query = normalized_query.replace(cyr, lat)
-                
+
                 clean_query = "".join(c for c in normalized_query if c.isalnum())
                 clean_filename = "".join(c for c in filename if c.isalnum())
-                
+
                 if clean_filename and (clean_filename in clean_query or clean_query in clean_filename):
                     bonus += 0.3
                     logger.info(f"🎯 FILENAME MATCH BONUS +0.3 for {source}")
                     system_hints.append("Точное совпадение имени файла")
 
             # ── 3. ТЕМАТИЧЕСКИЕ УРОВНИ (Tiers) ──
-            location_keywords = ["где", "адрес", "найти", "локация", "местоположение", "добраться", "пройти", "проехать", "карта"]
+            location_keywords = [
+                "где",
+                "адрес",
+                "найти",
+                "локация",
+                "местоположение",
+                "добраться",
+                "пройти",
+                "проехать",
+                "карта",
+            ]
             is_location_query = any(lkw in query_lower for lkw in location_keywords)
-            hr_keywords = ["работа", "трудоустройство", "вакансия", "прием", "найм", "увольнение", "отпуск", "больничный", "кадры"]
+            hr_keywords = [
+                "работа",
+                "трудоустройство",
+                "вакансия",
+                "прием",
+                "найм",
+                "увольнение",
+                "отпуск",
+                "больничный",
+                "кадры",
+            ]
             is_hr_query = any(hkw in query_lower for hkw in hr_keywords)
 
             # Уровень 0: Локации
             if doc_type == "company_location" and is_location_query:
                 bonus += 0.5
-            
+
             # Уровень 0.5: HR
             elif doc_type == "hr_policy" and is_hr_query:
                 bonus += 0.25
@@ -151,7 +171,7 @@ class BusinessLogicScorer:
             if q_answered and any(query_lower in str(q).lower() or str(q).lower() in query_lower for q in q_answered):
                 bonus += 0.3
                 logger.info(f"🎯 MATCH BONUS: Query matches 'questions_answered' in {source}")
-                
+
             # Уровень 1: Предприятие
             is_target_company = False
             if target_company_id and company_tag:
@@ -161,11 +181,15 @@ class BusinessLogicScorer:
                     # Резервная нормализация без регулярок
                     clean_target = "".join(c for c in target_company_id.lower() if c.isalnum())
                     clean_tag = "".join(c for c in company_tag.lower() if c.isalnum())
-                    is_target_company = (clean_target == clean_tag) or (clean_target in clean_tag and len(clean_target) > 2) or (clean_tag in clean_target and len(clean_tag) > 2)
-            
+                    is_target_company = (
+                        (clean_target == clean_tag)
+                        or (clean_target in clean_tag and len(clean_target) > 2)
+                        or (clean_tag in clean_target and len(clean_tag) > 2)
+                    )
+
             if is_target_company:
                 bonus += 0.5
-                
+
             doc_copy["score"] = doc_copy.get("score", 0.0) + bonus
             scored_results.append(doc_copy)
 

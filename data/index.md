@@ -1,13 +1,14 @@
 ---
+organization: "shared"
+category: "general"
 title: "База знаний ГК ТЭМПО"
 description: "Центральный навигационный узел базы знаний холдинга ТЭМПО"
 tags: ["база знаний", "главная", "навигация", "холдинг"]
 questions_answered:
   - "С чего начать поиск в базе знаний?"
   - "Какие разделы доступны для изучения?"
-department: "General"
-company: "ГК «ТЭМПО»"
 last_updated: "2026-04-10"
+source_file: "index.md"
 ---
 
 # База знаний ГК «ТЭМПО»

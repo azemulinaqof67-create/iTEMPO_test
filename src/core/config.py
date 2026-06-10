@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Union
 
-import yaml
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения из .env файла
@@ -65,6 +64,7 @@ class RAGConfig:
     rerank_top_k: int = 25
     rerank_max_docs: int = 50
     rerank_doc_chars: int = 1000
+    rerank_min_docs: int = 5
     semantic_chunk_size: int = 1000
     semantic_similarity_threshold: float = 0.75
     parent_chunk_size: int = 6000
@@ -128,18 +128,32 @@ class RAGConfig:
             collection_name=_get_str("COLLECTION_NAME", qdrant_y, "collection_name", c.collection_name),
             search_limit=_get_int("SEARCH_LIMIT", rag_y, "search_limit", c.search_limit),
             fetch_limit=_get_int("FETCH_LIMIT", rag_y, "fetch_limit", c.fetch_limit),
-            use_contextual_retrieval=_get_bool("USE_CONTEXTUAL_RETRIEVAL", rag_y, "use_contextual_retrieval", c.use_contextual_retrieval),
+            use_contextual_retrieval=_get_bool(
+                "USE_CONTEXTUAL_RETRIEVAL", rag_y, "use_contextual_retrieval", c.use_contextual_retrieval
+            ),
             use_hybrid_search=_get_bool("USE_HYBRID_SEARCH", rag_y, "use_hybrid_search", c.use_hybrid_search),
             use_rag_fusion=_get_bool("USE_RAG_FUSION", rag_y, "use_rag_fusion", c.use_rag_fusion),
             use_llm_rerank=_get_bool("USE_LLM_RERANK", rag_y, "use_llm_rerank", c.use_llm_rerank),
-            use_semantic_chunking=_get_bool("USE_SEMANTIC_CHUNKING", rag_y, "use_semantic_chunking", c.use_semantic_chunking),
-            use_parent_child_chunks=_get_bool("USE_PARENT_CHILD_CHUNKS", rag_y, "use_parent_child_chunks", c.use_parent_child_chunks),
+            use_semantic_chunking=_get_bool(
+                "USE_SEMANTIC_CHUNKING", rag_y, "use_semantic_chunking", c.use_semantic_chunking
+            ),
+            use_parent_child_chunks=_get_bool(
+                "USE_PARENT_CHILD_CHUNKS", rag_y, "use_parent_child_chunks", c.use_parent_child_chunks
+            ),
             use_fallback=_get_bool("USE_FALLBACK", rag_y, "use_fallback", c.use_fallback),
             enable_metrics=_get_bool("ENABLE_METRICS", rag_y, "enable_metrics", c.enable_metrics),
-            use_incremental_updates=_get_bool("USE_INCREMENTAL_UPDATES", rag_y, "use_incremental_updates", c.use_incremental_updates),
-            contextual_text_model=_get_str("CONTEXTUAL_TEXT_MODEL", rag_y, "contextual_text_model", c.contextual_text_model),
-            contextual_max_doc_chars=_get_int("CONTEXTUAL_MAX_DOC_CHARS", rag_y, "contextual_max_doc_chars", c.contextual_max_doc_chars),
-            contextual_parallelism=_get_int("CONTEXTUAL_PARALLELISM", rag_y, "contextual_parallelism", c.contextual_parallelism),
+            use_incremental_updates=_get_bool(
+                "USE_INCREMENTAL_UPDATES", rag_y, "use_incremental_updates", c.use_incremental_updates
+            ),
+            contextual_text_model=_get_str(
+                "CONTEXTUAL_TEXT_MODEL", rag_y, "contextual_text_model", c.contextual_text_model
+            ),
+            contextual_max_doc_chars=_get_int(
+                "CONTEXTUAL_MAX_DOC_CHARS", rag_y, "contextual_max_doc_chars", c.contextual_max_doc_chars
+            ),
+            contextual_parallelism=_get_int(
+                "CONTEXTUAL_PARALLELISM", rag_y, "contextual_parallelism", c.contextual_parallelism
+            ),
             vector_fetch_limit=_get_int("VECTOR_FETCH_LIMIT", rag_y, "vector_fetch_limit", c.vector_fetch_limit),
             bm25_fetch_limit=_get_int("BM25_FETCH_LIMIT", rag_y, "bm25_fetch_limit", c.bm25_fetch_limit),
             fusion_fetch_limit=_get_int("FUSION_FETCH_LIMIT", rag_y, "fusion_fetch_limit", c.fusion_fetch_limit),
@@ -148,12 +162,17 @@ class RAGConfig:
             rerank_top_k=_get_int("RERANK_TOP_K", rag_y, "rerank_top_k", c.rerank_top_k),
             rerank_max_docs=_get_int("RERANK_MAX_DOCS", rag_y, "rerank_max_docs", c.rerank_max_docs),
             rerank_doc_chars=_get_int("RERANK_DOC_CHARS", rag_y, "rerank_doc_chars", c.rerank_doc_chars),
+            rerank_min_docs=_get_int("RERANK_MIN_DOCS", rag_y, "rerank_min_docs", c.rerank_min_docs),
             semantic_chunk_size=_get_int("SEMANTIC_CHUNK_SIZE", rag_y, "semantic_chunk_size", c.semantic_chunk_size),
-            semantic_similarity_threshold=_get_float("SEMANTIC_SIMILARITY_THRESHOLD", rag_y, "semantic_similarity_threshold", c.semantic_similarity_threshold),
+            semantic_similarity_threshold=_get_float(
+                "SEMANTIC_SIMILARITY_THRESHOLD", rag_y, "semantic_similarity_threshold", c.semantic_similarity_threshold
+            ),
             parent_chunk_size=_get_int("PARENT_CHUNK_SIZE", rag_y, "parent_chunk_size", c.parent_chunk_size),
             child_chunk_size=_get_int("CHILD_CHUNK_SIZE", rag_y, "child_chunk_size", c.child_chunk_size),
             bm25_min_token_len=_get_int("BM25_MIN_TOKEN_LEN", rag_y, "bm25_min_token_len", c.bm25_min_token_len),
-            document_hashes_path=Path(_get_str("DOCUMENT_HASHES_PATH", qdrant_y, "document_hashes_path", str(c.document_hashes_path))),
+            document_hashes_path=Path(
+                _get_str("DOCUMENT_HASHES_PATH", qdrant_y, "document_hashes_path", str(c.document_hashes_path))
+            ),
         )
 
 
@@ -262,6 +281,9 @@ class MemoryConfig:
     summarization_threshold: int = 50
     max_context_tokens: int = 8000
     enable_auto_summarization: bool = True
+    messages_summarize_threshold: int = 20
+    messages_keep_recent: int = 10
+    max_chars_per_history_message: int = 2000
 
     @classmethod
     def from_env(cls, current: Optional["MemoryConfig"] = None, yaml_data: Optional[dict] = None) -> "MemoryConfig":
@@ -301,11 +323,24 @@ class MemoryConfig:
 
         return cls(
             chat_history_enabled=_get_bool("CHAT_HISTORY_ENABLED", "chat_history_enabled", c.chat_history_enabled),
-            chat_history_db_path=Path(_get_str("CHAT_HISTORY_DB_PATH", "chat_history_db_path", str(c.chat_history_db_path))),
+            chat_history_db_path=Path(
+                _get_str("CHAT_HISTORY_DB_PATH", "chat_history_db_path", str(c.chat_history_db_path))
+            ),
             max_history_messages=_get_int("MAX_HISTORY_MESSAGES", "max_history_messages", c.max_history_messages),
-            summarization_threshold=_get_int("SUMMARIZATION_THRESHOLD", "summarization_threshold", c.summarization_threshold),
+            summarization_threshold=_get_int(
+                "SUMMARIZATION_THRESHOLD", "summarization_threshold", c.summarization_threshold
+            ),
             max_context_tokens=_get_int("MAX_CONTEXT_TOKENS", "max_context_tokens", c.max_context_tokens),
-            enable_auto_summarization=_get_bool("ENABLE_AUTO_SUMMARIZATION", "enable_auto_summarization", c.enable_auto_summarization),
+            enable_auto_summarization=_get_bool(
+                "ENABLE_AUTO_SUMMARIZATION", "enable_auto_summarization", c.enable_auto_summarization
+            ),
+            messages_summarize_threshold=_get_int(
+                "MESSAGES_SUMMARIZE_THRESHOLD", "messages_summarize_threshold", c.messages_summarize_threshold
+            ),
+            messages_keep_recent=_get_int("MESSAGES_KEEP_RECENT", "messages_keep_recent", c.messages_keep_recent),
+            max_chars_per_history_message=_get_int(
+                "MAX_CHARS_PER_HISTORY_MESSAGE", "max_chars_per_history_message", c.max_chars_per_history_message
+            ),
         )
 
 
@@ -344,6 +379,8 @@ class Config:
     admin_enabled: bool = True
     admin_port: int = 8080
     admin_password: str = "tempo_admin_2024"
+    yandex_360_token: Optional[str] = None
+    yandex_360_org_id: Optional[str] = None
 
     rag: RAGConfig = field(default_factory=RAGConfig)
     helpdesk: HelpdeskConfig = field(default_factory=HelpdeskConfig)
@@ -358,6 +395,7 @@ class Config:
         if yaml_path.exists():
             try:
                 import yaml
+
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     yaml_data = yaml.safe_load(f) or {}
             except Exception as e:
@@ -403,7 +441,7 @@ class Config:
         env_keys = []
         for k, v in os.environ.items():
             if k.startswith("GEMINI_API_KEY_") and v.strip():
-                suffix = k[len("GEMINI_API_KEY_"):]
+                suffix = k[len("GEMINI_API_KEY_") :]
                 if suffix.isdigit():
                     env_keys.append((int(suffix), v.strip()))
         env_keys.sort(key=lambda x: x[0])
@@ -412,14 +450,25 @@ class Config:
         if self.gemini_api_key and self.gemini_api_key not in api_keys:
             api_keys.insert(0, self.gemini_api_key)
 
+        # Удаляем дубликаты с сохранением порядка
+        seen = set()
+        unique_keys = []
+        for k in api_keys:
+            if k not in seen:
+                seen.add(k)
+                unique_keys.append(k)
+        api_keys = unique_keys
+
         if api_keys:
             self.api_keys = api_keys
             if not self.gemini_api_key:
                 self.gemini_api_key = api_keys[0]
-            logger.info(f"🔄 Перезагружено {len(api_keys)} API ключей")
+            logger.info(f"🔄 Перезагружено {len(api_keys)} уникальных API ключей")
         self.text_model = os.getenv("GEMINI_TEXT_MODEL", self.text_model)
         self.audio_model = os.getenv("GEMINI_AUDIO_MODEL", self.audio_model)
-        raw_embedding_models = os.getenv("GEMINI_EMBEDDING_MODEL", ",".join(self.embedding_models) if self.embedding_models else self.embedding_model)
+        raw_embedding_models = os.getenv(
+            "GEMINI_EMBEDDING_MODEL", ",".join(self.embedding_models) if self.embedding_models else self.embedding_model
+        )
         if raw_embedding_models:
             self.embedding_models = [m.strip() for m in raw_embedding_models.split(",") if m.strip()]
             self.embedding_model = self.embedding_models[0]
@@ -440,6 +489,8 @@ class Config:
         self.force_proxy = (force_proxy_val == "1") if force_proxy_val is not None else self.force_proxy
         self.max_webhook_url = os.getenv("MAX_WEBHOOK_URL", self.max_webhook_url)
         self.max_webhook_secret = os.getenv("MAX_WEBHOOK_SECRET", self.max_webhook_secret)
+        self.yandex_360_token = os.getenv("YANDEX_360_TOKEN", self.yandex_360_token)
+        self.yandex_360_org_id = os.getenv("YANDEX_360_ORG_ID", self.yandex_360_org_id)
 
     @classmethod
     def from_env(cls, env_file: str = ".env", models_yaml: str = "models_config.yaml") -> "Config":
@@ -453,7 +504,7 @@ class Config:
         env_keys = []
         for k, v in os.environ.items():
             if k.startswith("GEMINI_API_KEY_") and v.strip():
-                suffix = k[len("GEMINI_API_KEY_"):]
+                suffix = k[len("GEMINI_API_KEY_") :]
                 if suffix.isdigit():
                     env_keys.append((int(suffix), v.strip()))
         env_keys.sort(key=lambda x: x[0])
@@ -462,12 +513,21 @@ class Config:
         if gemini_api_key and gemini_api_key not in api_keys:
             api_keys.insert(0, gemini_api_key)
 
+        # Удаляем дубликаты с сохранением порядка
+        seen = set()
+        unique_keys = []
+        for k in api_keys:
+            if k not in seen:
+                seen.add(k)
+                unique_keys.append(k)
+        api_keys = unique_keys
+
         if not api_keys:
             raise ConfigError("GEMINI_API_KEY или GEMINI_API_KEY_1 не задан в .env")
 
         if not gemini_api_key:
             gemini_api_key = api_keys[0]
-        logger.info(f"🔑 Загружено {len(api_keys)} API ключей")
+        logger.info(f"🔑 Загружено {len(api_keys)} уникальных API ключей")
 
         # Загрузка YAML конфигурации
         yaml_data = {}
@@ -475,6 +535,7 @@ class Config:
         if yaml_path.exists():
             try:
                 import yaml
+
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     yaml_data = yaml.safe_load(f) or {}
             except Exception as e:
@@ -563,7 +624,7 @@ class Config:
             for x in whitelist_str.split(","):
                 if x.strip().isdigit():
                     whitelist.append(int(x.strip()))
-        
+
         default_city = _get_str("DEFAULT_CITY", app_y, "default_city", "Набережные Челны")
         rag_conf = RAGConfig.from_env(yaml_data=yaml_data)
         if models_config.contextual_retrieval:
@@ -605,6 +666,8 @@ class Config:
             admin_enabled=_get_bool("ADMIN_ENABLED", app_y, "admin_enabled", True),
             admin_port=_get_int("ADMIN_PORT", app_y, "admin_port", 8080),
             admin_password=_get_str("ADMIN_PASSWORD", app_y, "admin_password", "tempo_admin_2024"),
+            yandex_360_token=os.getenv("YANDEX_360_TOKEN"),
+            yandex_360_org_id=os.getenv("YANDEX_360_ORG_ID"),
         )
 
     # Property Aliases for backward compatibility

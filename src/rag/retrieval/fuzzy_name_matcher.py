@@ -16,12 +16,13 @@
 
 import logging
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
 try:
-    from rapidfuzz import fuzz, process as fuzz_process
+    from rapidfuzz import fuzz
+    from rapidfuzz import process as fuzz_process
 
     _RAPIDFUZZ_AVAILABLE = True
 except ImportError:
@@ -51,17 +52,78 @@ _MIN_TOKEN_LEN = 4
 # ─── Стоп-слова: общие слова, которые не являются именами ──────────────────────
 
 _STOP_WORDS: Set[str] = {
-    "телефон", "номер", "контакт", "сотрудник", "работник", "начальник",
-    "директор", "менеджер", "специалист", "отдел", "цех", "кабинет",
-    "дать", "найти", "показать", "сказать", "позвонить", "написать",
-    "какой", "какая", "какое", "какие", "чей", "чья", "чьё",
-    "нужно", "нужна", "нужен", "прошу", "позвони", "напиши",
-    "руководитель", "заместитель", "главный", "старший", "ведущий",
-    "инженер", "бухгалтер", "экономист", "технолог", "мастер",
-    "завод", "предприятие", "компания", "холдинг", "тэмпо", "темпо",
-    "травма", "инцидент", "порядок", "действие", "получение", "помощь", "пожар", "охрана", "сб",
-    "адрес", "место", "расположение", "карта", "маршрут", "проезд", "документ", "список", "перечень",
-    "кадр", "кадры", "кадров", "прием", "трудоустройство", "работа", "вакансия"
+    "телефон",
+    "номер",
+    "контакт",
+    "сотрудник",
+    "работник",
+    "начальник",
+    "директор",
+    "менеджер",
+    "специалист",
+    "отдел",
+    "цех",
+    "кабинет",
+    "дать",
+    "найти",
+    "показать",
+    "сказать",
+    "позвонить",
+    "написать",
+    "какой",
+    "какая",
+    "какое",
+    "какие",
+    "чей",
+    "чья",
+    "чьё",
+    "нужно",
+    "нужна",
+    "нужен",
+    "прошу",
+    "позвони",
+    "напиши",
+    "руководитель",
+    "заместитель",
+    "главный",
+    "старший",
+    "ведущий",
+    "инженер",
+    "бухгалтер",
+    "экономист",
+    "технолог",
+    "мастер",
+    "завод",
+    "предприятие",
+    "компания",
+    "холдинг",
+    "тэмпо",
+    "темпо",
+    "травма",
+    "инцидент",
+    "порядок",
+    "действие",
+    "получение",
+    "помощь",
+    "пожар",
+    "охрана",
+    "сб",
+    "адрес",
+    "место",
+    "расположение",
+    "карта",
+    "маршрут",
+    "проезд",
+    "документ",
+    "список",
+    "перечень",
+    "кадр",
+    "кадры",
+    "кадров",
+    "прием",
+    "трудоустройство",
+    "работа",
+    "вакансия",
 }
 
 # Русские согласные (строчные)
@@ -167,6 +229,49 @@ class FuzzyNameMatcher:
             len(self._name_list),
         )
 
+    def rebuild_from_names(self, full_names: List[str]) -> None:
+        """
+        Строит словарь имён/фамилий из готовых ФИО (например, из contacts.db).
+
+        Принимает список строк вида «Фамилия Имя Отчество» и извлекает
+        из них отдельные слова — Фамилии, Имена, Отчества — для fuzzy-словаря.
+        Значительно быстрее и легче, чем rebuild() по всему корпусу текстов.
+        """
+        if not _RAPIDFUZZ_AVAILABLE:
+            return
+
+        collected: Set[str] = set()
+
+        for full_name in full_names:
+            # Разбиваем ФИО на части: «Иванов Пётр Сергеевич» → [«Иванов», «Пётр», «Сергеевич»]
+            for raw_word in re.findall(r"[А-ЯЁ][а-яё]{2,}", full_name):
+                word_lower = raw_word.lower()
+
+                if word_lower in _STOP_WORDS:
+                    continue
+                if len(word_lower) < _MIN_TOKEN_LEN:
+                    continue
+
+                lemma = _lemmatize(word_lower)
+                collected.add(lemma)
+                if lemma not in self._lemma_to_original:
+                    self._lemma_to_original[lemma] = raw_word
+
+        self._name_list = sorted(collected)
+
+        # Строим индекс согласных скелетов
+        self._skeleton_index = {}
+        for name in self._name_list:
+            sk = _consonant_skeleton(name)
+            if sk:
+                self._skeleton_index.setdefault(sk, []).append(name)
+
+        logger.info(
+            "🔤 FuzzyNameMatcher: построен словарь из %d уникальных имён/фамилий (из %d ФИО контактов)",
+            len(self._name_list),
+            len(full_names),
+        )
+
     def correct_query(self, query: str) -> Tuple[str, bool]:
         """
         Пробует исправить имена/фамилии в запросе через нечёткое сопоставление.
@@ -215,7 +320,10 @@ class FuzzyNameMatcher:
                 replacements[token] = matched_name
                 logger.info(
                     "🔤 Fuzzy[WRatio]: '%s' (лемма='%s') → '%s' (score=%.1f)",
-                    token, lemma, matched_name, score,
+                    token,
+                    lemma,
+                    matched_name,
+                    score,
                 )
                 continue
 
@@ -243,7 +351,10 @@ class FuzzyNameMatcher:
                     replacements[token] = matched_name
                     logger.info(
                         "🔤 Fuzzy[consonant]: '%s' (sk='%s') → '%s' (score=%.1f)",
-                        token, token_sk, matched_name, score2,
+                        token,
+                        token_sk,
+                        matched_name,
+                        score2,
                     )
 
         if not replacements:

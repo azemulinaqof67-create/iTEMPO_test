@@ -1,17 +1,26 @@
 ---
-title: 'АО ПТФК "ЗТЭО"'
-description: 'Главная страница раздела АО ПТФК "ЗТЭО"'
-tags: ["предприятие", "навигация"]
+organization: "zteo"
+category: "general"
+title: "АО ПТФК 'ЗТЭО'"
+description: "Навигационный индекс документов организации АО ПТФК 'ЗТЭО'"
+tags: ["индекс", "навигация", "zteo"]
 questions_answered:
-  - "Какая информация доступна по "
-department: "General"
-company: 'АО ПТФК "ЗТЭО"'
-last_updated: "2026-04-20"
+  - "Какие разделы доступны для АО ПТФК 'ЗТЭО'?"
+last_updated: "2026-06-02"
+source_file: "zteo/index.md"
 ---
 
-# АО ПТФК "ЗТЭО"
+# Документы: АО ПТФК 'ЗТЭО'
 
-Добро пожаловать в раздел АО ПТФК "ЗТЭО". Здесь собрана информация, специфичная для вашего предприятия.
+Доступные разделы базы знаний:
 
-### Доступные материалы
-- **[[Расположение на территории|location/in_tempo]]**: Координаты цехов, складов и объектов на территории.
+- [[Кадры и мотивация (hr)|hr/index]]
+- [[Внутренний распорядок и регламенты (routine)|routine/index]]
+- [[Транспорт и логистика (logistics)|logistics/index]]
+- [[Расположение и навигация (locations)|locations/index]]
+- [[ИТ и рабочее место (it_support)|it_support/index]]
+- [[Инфраструктура (infrastructure)|infrastructure/index]]
+- [[Helpdesk (helpdesk)|helpdesk/index]]
+- [[Социальная сфера и Профсоюз (social)|social/index]]
+- [[Корпоративный календарь (calendar)|calendar/index]]
+- [[О компании (company)|company/index]]

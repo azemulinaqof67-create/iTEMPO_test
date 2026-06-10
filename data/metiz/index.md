@@ -1,17 +1,26 @@
 ---
+organization: "metiz"
+category: "general"
 title: "ООО Технотрон-Метиз"
-description: "Главная страница раздела ООО Технотрон-Метиз"
-tags: ["предприятие", "навигация"]
+description: "Навигационный индекс документов организации ООО Технотрон-Метиз"
+tags: ["индекс", "навигация", "metiz"]
 questions_answered:
-  - "Какая информация доступна по "
-department: "General"
-company: "ООО Технотрон-Метиз"
-last_updated: "2026-04-20"
+  - "Какие разделы доступны для ООО Технотрон-Метиз?"
+last_updated: "2026-06-02"
+source_file: "metiz/index.md"
 ---
 
-# ООО Технотрон-Метиз
+# Документы: ООО Технотрон-Метиз
 
-Добро пожаловать в раздел ООО Технотрон-Метиз. Здесь собрана информация, специфичная для вашего предприятия.
+Доступные разделы базы знаний:
 
-### Доступные материалы
-- **[[Расположение на территории|location/in_tempo]]**: Координаты цехов, складов и объектов на территории.
+- [[Кадры и мотивация (hr)|hr/index]]
+- [[Внутренний распорядок и регламенты (routine)|routine/index]]
+- [[Транспорт и логистика (logistics)|logistics/index]]
+- [[Расположение и навигация (locations)|locations/index]]
+- [[ИТ и рабочее место (it_support)|it_support/index]]
+- [[Инфраструктура (infrastructure)|infrastructure/index]]
+- [[Helpdesk (helpdesk)|helpdesk/index]]
+- [[Социальная сфера и Профсоюз (social)|social/index]]
+- [[Корпоративный календарь (calendar)|calendar/index]]
+- [[О компании (company)|company/index]]

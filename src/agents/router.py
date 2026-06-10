@@ -1,21 +1,23 @@
 import logging
+
 from src.core.config import Config
-from src.models.state import QueryIntent
 from src.llm.text import TextLLMService
+from src.models.state import QueryIntent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class IntentRouter:
     """
     LLM Роутер для определения намерения пользователя и извлечения сущностей.
     Использует TextLLMService для надежности и Structured Outputs для формата.
     """
-    
+
     def __init__(self, config: Config):
         self.config = config
         self.llm_service = TextLLMService(config)
-        
+
     async def classify_query(self, query: str) -> QueryIntent:
         """
         Классифицирует запрос пользователя.
@@ -35,6 +37,8 @@ class IntentRouter:
 5. general_info: общая информация о холдинге, новости, история.
 6. weather: вопросы о погоде, температуре, прогнозе на сегодня или неделю.
    - ПРИМЕР: "какая погода в челнах?", "завтра будет дождь?", "холодно на улице?".
+7. personal: вопросы пользователя О СЕБЕ САМОМ или об ИСТОРИИ ТЕКУЩЕГО ДИАЛОГА. Пользователь спрашивает, как его зовут, кто он, что он спрашивал ранее, о чём шёл разговор, помнит ли бот его, и любые другие мета-вопросы о взаимодействии. Эти вопросы НЕ требуют поиска по базе знаний — ответ есть только в памяти диалога.
+   - ПРИМЕР: "как меня зовут?", "кто я?", "что я спрашивал?", "о чём мы говорили?", "ты меня помнишь?", "скажи моё имя".
 
 ПРАВИЛА ИЗВЛЕЧЕНИЯ:
 - target_company: Ищи упоминания заводов. СТРОГО соблюдай следующие различия:
@@ -47,20 +51,29 @@ class IntentRouter:
   ВАЖНО: Если ищут "айтишника", замени на "ИТ". Если ищут "управляющего", "директора", "начальника" или "главного" в контексте должности, добавляй эти слова как синонимы для расширения поиска (например: "директор управляющий руководитель главный").
   Очищай значение от лишних слов-паразитов. 
   Например: "дай номер ильнара" -> "ильнар", "найди телефон отдела кадров" -> "отдел кадров", "покажи контакты управляющего технотрона" -> "управляющий директор".
+- exact_phone: Если пользователь ищет контакты по номеру телефона (например, "чей номер 1234", "кто звонил с 55-41-00"), извлеки этот номер телефона (все цифры).
 - target_location: Если это запрос погоды, извлеки название города. 
   Например: "какая погода в челнах?" -> "Набережные Челны", "погода в казани" -> "Казань".
   Если город не указан, оставь null (будет использован город по умолчанию).
 
-- is_topic_shift: Если текущий запрос логически не связан с предыдущим (например, пользователь спрашивал про контакты, а теперь спрашивает "как оформить отпуск" или "что делать при травме"), установи is_topic_shift=True и НЕ заполняй target_company на основе старых сообщений.
+- is_topic_shift: If current query is logically unrelated to the previous one (e.g., user asked for contacts, now asks "how to schedule vacation" or "what to do in emergency"), set is_topic_shift=True and do NOT fill target_company based on old messages.
+
+ПРАВИЛА ДЛЯ requires_rag:
+- requires_rag: Установи в True, если запрос пользователя требует обращения к текстовым документам/базе знаний (RAG) помимо или вместо базы данных контактов.
+  Устанавливай True в следующих случаях:
+  1. Вопросы о руководстве, структуре подчинения, иерархии, руководителях, управляющих, директорах (например: "кто директор АЙТИ ТЭМПО?", "кто начальник отдела разработки?", "кто управляющий ЗТЭО?").
+  2. Вопросы об адресах, схемах проезда, местонахождении корпусов, цехов, кабинетов.
+  3. Вопросы о графике работы, расписании автобусов, обеденных перерывах, регламентах, отпусках, больничных, ДМС и т.д.
+  4. Запросы о должностных обязанностях или о том, кто за что отвечает.
+  Устанавливай False в следующих случаях:
+  1. Простые запросы контактов, телефонов или почты конкретных сотрудников (например: "номер Иванова", "контакты Петрова", "найди Ильнара").
 
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ: {query}
 """
-        
+
         try:
             return await self.llm_service.generate_structured(
-                prompt=prompt,
-                response_schema=QueryIntent,
-                api_version="v1beta"
+                prompt=prompt, response_schema=QueryIntent, api_version="v1beta"
             )
         except Exception as e:
             logger.error(f"Router failed (fallback to general_info): {e}")
@@ -70,8 +83,9 @@ class IntentRouter:
 if __name__ == "__main__":
     # Тестовый запуск
     import asyncio
+
     from src.core.config import Config
-    
+
     async def test():
         cfg = Config.from_env()
         router = IntentRouter(cfg)
@@ -86,14 +100,13 @@ if __name__ == "__main__":
             "номер технотрона",
             "номер метиза",
             "кто главный айтишник?",
-            "как позвонить в айти службу?"
+            "как позвонить в айти службу?",
         ]
-        with open('scratch/router_test_results.txt', 'w', encoding='utf-8') as f:
+        with open("scratch/router_test_results.txt", "w", encoding="utf-8") as f:
             for q in test_queries:
                 res = await router.classify_query(q)
                 output = f"Q: {q} -> Intent: {res.intent}, Company: {res.target_company}, Person: {res.target_person}\n"
-                print(output, end='')
+                print(output, end="")
                 f.write(output)
-
 
     asyncio.run(test())

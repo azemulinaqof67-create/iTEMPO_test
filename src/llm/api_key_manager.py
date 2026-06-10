@@ -78,47 +78,40 @@ class ApiKeyManager:
 
     def get_current_key(self) -> str:
         """
-        Get current active API key.
-        
-        If auto_rotate is enabled, automatically switches to next available key
-        for each call (round-robin across non-exhausted keys).
+        Получить активный API ключ.
+
+        Если включен auto_rotate, используется умная балансировка (рандомный выбор
+        из доступных ключей) для равномерного распределения нагрузки на весь пул,
+        исключая простаивание "последних" ключей.
 
         Returns:
             str: Current API key
         """
         with self._lock:
             self._check_reset_exhausted()
-            
-            # First try to use current key
+
+            if self.auto_rotate:
+                import random
+
+                available_keys = [k for k in self.api_keys if k not in self._exhausted_keys]
+                if available_keys:
+                    # Умная балансировка нагрузки: случайный выбор ключа из доступных
+                    selected_key = random.choice(available_keys)
+                    self._current_index = self.api_keys.index(selected_key)
+                    masked_key = self.get_masked_key(selected_key)
+                    logger.debug(f"Smart Load-Balancing: picked key {masked_key}")
+                    return selected_key
+                else:
+                    self._current_index = 0
+                    current_key = self.api_keys[0]
+                    logger.warning(f"All keys exhausted, using fallback key: {self.get_masked_key(current_key)}")
+                    return current_key
+
+            # Логика без auto_rotate: используем текущий индекс, пока ключ не исчерпается
             current_key = self.api_keys[self._current_index]
-            
-            # If current key is exhausted and auto_rotate is enabled, find next available key
-            if current_key in self._exhausted_keys and self.auto_rotate:
-                # Start from current position and find next non-exhausted key
-                attempts = 0
-                max_attempts = len(self.api_keys)
-                
-                while attempts < max_attempts:
-                    self._current_index = (self._current_index + 1) % len(self.api_keys)
-                    next_key = self.api_keys[self._current_index]
-                    
-                    if next_key not in self._exhausted_keys:
-                        # Found available key
-                        masked_key = self.get_masked_key(next_key)
-                        logger.debug(f"Key auto-rotated to: {masked_key} (Index: {self._current_index})")
-                        return next_key
-                    
-                    attempts += 1
-                
-                # If all keys are exhausted, reset to first key and use it anyway
-                self._current_index = 0
-                current_key = self.api_keys[self._current_index]
-                logger.warning(f"All keys exhausted, using first key: {self.get_masked_key(current_key)}")
-                return current_key
-            
-            # Return current key if it's available
-            masked_key = self.get_masked_key(current_key)
-            logger.debug(f"Using API key: {masked_key} (Index: {self._current_index})")
+            if current_key in self._exhausted_keys:
+                return self.rotate_key("current key exhausted") or current_key
+
             return current_key
 
     def rotate_key(self, reason: str = "unknown") -> Optional[str]:
@@ -219,20 +212,19 @@ class ApiKeyManager:
             active_count = len(self.api_keys) - len(self._exhausted_keys)
             exhausted_count = len(self._exhausted_keys)
             total_count = len(self.api_keys)
-            
+
             health_info = {
-                'total_keys': total_count,
-                'active_keys': active_count,
-                'exhausted_keys': exhausted_count,
-                'current_index': self._current_index,
-                'time_until_reset': self._time_until_reset()
+                "total_keys": total_count,
+                "active_keys": active_count,
+                "exhausted_keys": exhausted_count,
+                "current_index": self._current_index,
+                "time_until_reset": self._time_until_reset(),
             }
-            
+
             logger.info(
-                f"🏊 Здоровье пула: {active_count} активных, {exhausted_count} на отдыхе "
-                f"(всего: {total_count})"
+                f"🏊 Здоровье пула: {active_count} активных, {exhausted_count} на отдыхе (всего: {total_count})"
             )
-            
+
             return health_info
 
     def is_all_exhausted(self) -> bool:

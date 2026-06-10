@@ -1,17 +1,26 @@
 ---
-title: 'АО НТЗ "ТЭМ-ПО"'
-description: 'Главная страница раздела АО НТЗ "ТЭМ-ПО"'
-tags: ["предприятие", "навигация"]
+organization: "ntz"
+category: "general"
+title: "АО НТЗ 'ТЭМ-ПО'"
+description: "Навигационный индекс документов организации АО НТЗ 'ТЭМ-ПО'"
+tags: ["индекс", "навигация", "ntz"]
 questions_answered:
-  - "Какая информация доступна по "
-department: "General"
-company: 'АО НТЗ "ТЭМ-ПО"'
-last_updated: "2026-04-20"
+  - "Какие разделы доступны для АО НТЗ 'ТЭМ-ПО'?"
+last_updated: "2026-06-02"
+source_file: "ntz/index.md"
 ---
 
-# АО НТЗ "ТЭМ-ПО"
+# Документы: АО НТЗ 'ТЭМ-ПО'
 
-Добро пожаловать в раздел АО НТЗ "ТЭМ-ПО". Здесь собрана информация, специфичная для вашего предприятия.
+Доступные разделы базы знаний:
 
-### Доступные материалы
-- **[[Расположение на территории|location/in_tempo]]**: Координаты цехов, складов и объектов на территории.
+- [[Кадры и мотивация (hr)|hr/index]]
+- [[Внутренний распорядок и регламенты (routine)|routine/index]]
+- [[Транспорт и логистика (logistics)|logistics/index]]
+- [[Расположение и навигация (locations)|locations/index]]
+- [[ИТ и рабочее место (it_support)|it_support/index]]
+- [[Инфраструктура (infrastructure)|infrastructure/index]]
+- [[Helpdesk (helpdesk)|helpdesk/index]]
+- [[Социальная сфера и Профсоюз (social)|social/index]]
+- [[Корпоративный календарь (calendar)|calendar/index]]
+- [[О компании (company)|company/index]]

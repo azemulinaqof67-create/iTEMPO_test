@@ -3,8 +3,9 @@
 """
 
 import logging
-import yaml
 from pathlib import Path
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ DEFAULT_COMPANIES = {
     "it": 'ООО "АЙТИ "ТЭМПО"',
 }
 
+
 def load_companies() -> dict:
     # Ищем models_config.yaml начиная с текущей папки и вверх по дереву
     current_dir = Path(__file__).resolve().parent
@@ -38,5 +40,5 @@ def load_companies() -> dict:
         current_dir = current_dir.parent
     return DEFAULT_COMPANIES
 
-COMPANIES = load_companies()
 
+COMPANIES = load_companies()

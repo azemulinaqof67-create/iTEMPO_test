@@ -1,0 +1,745 @@
+[
+  {
+    "path": "data/CONVENTIONS.md",
+    "meta": {}
+  },
+  {
+    "path": "data/incidents_and_help.md",
+    "meta": {
+      "title": "Действия при инцидентах, травмах и ЧС",
+      "description": "Куда обращаться при травмах, воровстве, пожаре, конфликтах",
+      "tags": "[\"инцидент\", \"травма\", \"воровство\", \"кража\", \"ЧС\", \"скорая\", \"помощь\", \"безопасность\"]",
+      "company": "ГК «ТЭМПО»",
+      "department": "General",
+      "last_updated": "2026-04-03"
+    }
+  },
+  {
+    "path": "data/index.md",
+    "meta": {
+      "title": "База знаний ГК ТЭМПО",
+      "description": "Центральный навигационный узел базы знаний холдинга ТЭМПО",
+      "tags": "[\"база знаний\", \"главная\", \"навигация\", \"холдинг\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/README.md",
+    "meta": {
+      "title": "База знаний ГК ТЭМПО",
+      "description": "Единая база знаний группы компаний ТЭМПО",
+      "tags": "[\"навигация\", \"база знаний\", \"ТЭМПО\", \"документация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-03"
+    }
+  },
+  {
+    "path": "data/01_company/index.md",
+    "meta": {
+      "title": "О компании ГК ТЭМПО",
+      "description": "Общая информация, контакты, расположение объектов и структура холдинга",
+      "tags": "[\"компания\", \"структура\", \"контакты\", \"локации\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/01_company/locations/abk_2.md",
+    "meta": {
+      "title": "АБК-2 (включая Отдел кадров)",
+      "description": "АБК-2 и Отдел кадров — расположение, адрес, кабинеты",
+      "tags": "[\"АБК-2\", \"кабинеты\", \"отдел кадров\", \"расположение\", \"офисы\", \"карта\", \"адрес\", \"ИТР\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-03-25"
+    }
+  },
+  {
+    "path": "data/01_company/locations/abk_3.md",
+    "meta": {
+      "title": "АБК-3 (Административно-бытовой комплекс №3)",
+      "description": "АБК-3 — расположение, общая инфраструктура (медпункт, столовая), офисы ЗТЭО, КЗМК, НПО и ООО 'АйТи' ТЭМПО",
+      "tags": "[\"АБК-3\", \"столовая\", \"медпункт\", \"расположение\", \"офисы\", \"карта\", \"ИТР\", \"ИТ-отдел\", \"ТЭМПО\", \"ЗТЭО\", \"КЗМК\", \"НПО\", \"АйТи\"]",
+      "department": "Company",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-03"
+    }
+  },
+  {
+    "path": "data/01_company/locations/index.md",
+    "meta": {
+      "title": "Расположение объектов ГК ТЭМПО",
+      "description": "Общая навигация по объектам и офисам ТЭМПО",
+      "tags": "[\"расположение\", \"адреса\", \"навигация\", \"карта\", \"АБК\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-03-25"
+    }
+  },
+  {
+    "path": "data/01_company/locations/social.md",
+    "meta": {
+      "title": "Социальные объекты и базы отдыха",
+      "description": "Места отдыха, гостевые дома и социальные объекты ГК ТЭМПО",
+      "tags": "[\"отдых\", \"база отдыха\", \"Березка\", \"социальные объекты\", \"карта\", \"расположение\"]",
+      "questions_answered": "",
+      "department": "Social",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-03-25"
+    }
+  },
+  {
+    "path": "data/01_company/structure/holding_companies.md",
+    "meta": {
+      "title": "Компании холдинга ТЭМПО",
+      "description": "7 компаний холдинга: ЗТЭО, Технотрон, Айти ТЭМПО, НТЗ, ИТЗ, Технотрон-Метиз, КЗМК",
+      "tags": "[\"холдинг\", \"компании\", \"ЗТЭО\", \"Технотрон\", \"НТЗ\", \"ИТЗ\", \"КЗМК\", \"ИНН\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/01_company/structure/index.md",
+    "meta": {
+      "title": "Структура холдинга",
+      "description": "Информация о компаниях холдинга и руководстве",
+      "tags": "[\"структура\", \"компании\", \"руководство\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/01_company/structure/leadership.md",
+    "meta": {
+      "title": "Руководство холдинга ТЭМПО",
+      "description": "Управляющие и директора компаний ГК ТЭМПО",
+      "tags": "[\"руководство\", \"директора\", \"управляющие\", \"контакты\", \"менеджмент\"]",
+      "questions_answered": "",
+      "department": "Company",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/02_hr/index.md",
+    "meta": {
+      "title": "HR документация ГК ТЭМПО",
+      "description": "Политика, льготы, подбор персонала и кадровые документы холдинга",
+      "tags": "[\"HR\", \"кадры\", \"персонал\", \"льготы\", \"политика\", \"подбор\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-03"
+    }
+  },
+  {
+    "path": "data/02_hr/benefits/index.md",
+    "meta": {
+      "title": "Льготы и компенсации",
+      "description": "Программы поддержки сотрудников: компенсация ипотеки, реферальная программа",
+      "tags": "[\"льготы\", \"компенсация\", \"ипотека\", \"приведи друга\", \"бонусы\"]",
+      "department": "HR",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/02_hr/benefits/mortgage_compensation.md",
+    "meta": {
+      "title": "Программа ипотечной компенсации",
+      "description": "Частичная компенсация расходов по уплате процентов по ипотечным кредитам",
+      "tags": "[\"ипотека\", \"компенсация\", \"льготы\", \"проценты\", \"кредит\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/02_hr/benefits/refer_a_friend.md",
+    "meta": {
+      "title": "Программа «Приведи друга»",
+      "description": "Денежное вознаграждение за рекомендацию кандидата на вакантные должности",
+      "tags": "[\"реферал\", \"приведи друга\", \"вознаграждение\", \"рекомендация\", \"бонус\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/02_hr/policies/dms.md",
+    "meta": {
+      "title": "Программа ДМС",
+      "description": "Добровольное медицинское страхование временно приостановлено",
+      "tags": "[\"ДМС\", \"медицина\", \"страхование\", \"льготы\", \"приостановлено\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/02_hr/policies/index.md",
+    "meta": {
+      "title": "Кадровые политики",
+      "description": "Регламенты, правила и политики управления персоналом ГК ТЭМПО",
+      "tags": "[\"политика\", \"регламент\", \"отпуск\", \"больничный\", \"зарплата\"]",
+      "department": "HR",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/02_hr/policies/payroll.md",
+    "meta": {
+      "title": "График выплат зарплаты",
+      "description": "Аванс 28-го числа, зарплата 13-го числа следующего месяца",
+      "tags": "[\"зарплата\", \"аванс\", \"выплаты\", \"28 число\", \"13 число\", \"сроки\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/02_hr/policies/sick_leave.md",
+    "meta": {
+      "title": "Политика больничных",
+      "description": "Уведомление в день болезни, электронный больничный лист, порядок расчета выплат в зависимости от стажа",
+      "tags": "[\"больничный\", \"болезнь\", \"оплата\", \"стаж\", \"электронный больничный\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/02_hr/policies/vacation.md",
+    "meta": {
+      "title": "Политика отпусков",
+      "description": "28 календарных дней ежегодного отпуска, заявление за 2 недели через 1С",
+      "tags": "[\"отпуск\", \"28 дней\", \"заявка\", \"1С документооборот\", \"отдых\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/02_hr/recruitment/index.md",
+    "meta": {
+      "title": "Подбор и адаптация",
+      "description": "Документы для трудоустройства и процессы найма в ГК ТЭМПО",
+      "tags": "[\"подбор\", \"рекрутинг\", \"прием на работу\", \"документы\", \"адаптация\"]",
+      "department": "HR",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/02_hr/recruitment/recruitment_documents_list.md",
+    "meta": {
+      "title": "Документы для трудоустройства",
+      "description": "Полный список документов для приема на работу и трудоустройства: паспорт, ИНН, СНИЛС, военный билет, медсправки. Инструкция, что делать при устройстве на работу.",
+      "tags": "[\"трудоустройство\", \"документы\", \"прием\", \"кадры\", \"справки\", \"устроиться\", \"работа\", \"вакансии\", \"прием на работу\", \"медкомиссия\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/03_routine/dress_code.md",
+    "meta": {
+      "title": "Корпоративный стиль одежды",
+      "description": "Требования к внешнему виду сотрудников ГК «ТЭМПО»",
+      "tags": "[\"дресс-код\", \"одежда\", \"внешний вид\", \"галстук\", \"требования\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2013-08-30"
+    }
+  },
+  {
+    "path": "data/03_routine/dress_code_order_metadata.md",
+    "meta": {
+      "title": "Приказ о корпоративном стиле одежды № 013/1537",
+      "description": "Реквизиты приказа от 30.08.2013 о введении корпоративного стиля",
+      "tags": "[\"приказ\", \"013/1537\", \"дресс-код\", \"Шарифуллин\", \"документ\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "last_updated": "2013-08-30"
+    }
+  },
+  {
+    "path": "data/03_routine/entry_exit_schedule.md",
+    "meta": {
+      "title": "График входа и выхода",
+      "description": "Время входа на территорию предприятия и выхода для разных графиков работы",
+      "tags": "[\"вход\", \"выход\", \"график\", \"КПП\", \"пропускной режим\", \"время\", \"опоздание\"]",
+      "questions_answered": "",
+      "department": "Routine",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/03_routine/index.md",
+    "meta": {
+      "title": "Внутренний распорядок",
+      "description": "График работы, дресс-код, правила посещения и услуги для сотрудников",
+      "tags": "[\"распорядок\", \"дресс-код\", \"столовая\", \"график\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/04_logistics/index.md",
+    "meta": {
+      "title": "Логистика и транспорт",
+      "description": "Информация о транспортном обеспечении, вахтах и логистических процессах",
+      "tags": "[\"логистика\", \"транспорт\", \"вахта\", \"автобусы\"]",
+      "questions_answered": "",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/04_logistics/shuttle_bus/from_work.md",
+    "meta": {
+      "title": "Вывоз с работы (все смены)",
+      "description": "График вывоза сотрудников после смены",
+      "tags": "[\"вахта\", \"автобус\", \"вывоз\", \"07:30\", \"16:30\", \"17:25\", \"19:30\", \"01:20\"]",
+      "questions_answered": "",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/04_logistics/shuttle_bus/index.md",
+    "meta": {
+      "title": "Вахтовые автобусы",
+      "description": "Расписание и маршруты корпоративного транспорта ГК ТЭМПО",
+      "tags": "[\"вахта\", \"автобус\", \"транспорт\", \"расписание\"]",
+      "questions_answered": "",
+      "- \"Какое расписание автобусов на 7": "00 и 8:00?",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/04_logistics/shuttle_bus/to_work_07.md",
+    "meta": {
+      "title": "Вахтовые автобусы к 07:00 (рабочие)",
+      "description": "График развоза рабочих к началу смены 07:00",
+      "tags": "[\"вахта\", \"автобус\", \"07:00\", \"развоз\", \"межгород\", \"город\"]",
+      "questions_answered": "",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/04_logistics/shuttle_bus/to_work_08.md",
+    "meta": {
+      "title": "Вахтовые автобусы к 08:00 (ИТР/офис)",
+      "description": "График развоза ИТР и офисных сотрудников к началу смены 08:00",
+      "tags": "[\"вахта\", \"автобус\", \"08:00\", \"ИТР\", \"офис\", \"развоз\"]",
+      "questions_answered": "",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/04_logistics/shuttle_bus/to_work_16_19.md",
+    "meta": {
+      "title": "Вахтовые автобусы к 16:00 и 19:00",
+      "description": "График развоза к сменам 16:00 и 19:00",
+      "tags": "[\"вахта\", \"автобус\", \"16:00\", \"19:00\", \"вторая смена\", \"ночная смена\"]",
+      "questions_answered": "",
+      "- \"Во сколько автобус к 16": "00?",
+      "- \"Какие автобусы к 19": "00?",
+      "department": "Logistics",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/05_it/email_policy.md",
+    "meta": {
+      "title": "Политика электронной почты",
+      "description": "Правила использования корпоративной электронной почты",
+      "tags": "[\"email\", \"почта\", \"домен\", \"политика\", \"приказ\", \"корпоративная почта\"]",
+      "questions_answered": "",
+      "department": "IT",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2021-05-05"
+    }
+  },
+  {
+    "path": "data/05_it/helpdesk.md",
+    "meta": {
+      "title": "Инструкция HelpDesk",
+      "description": "Пошаговая инструкция по созданию заявок в Intraservice",
+      "tags": "[\"HelpDesk\", \"заявка\", \"ИТ\", \"Intraservice\", \"инструкция\", \"поддержка\"]",
+      "questions_answered": "",
+      "department": "IT",
+      "company": "ООО «Айти ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/05_it/index.md",
+    "meta": {
+      "title": "IT документация ГК ТЭМПО",
+      "description": "Инструкции, политика и сервисы ИТ-поддержки холдинга",
+      "tags": "[\"IT\", \"инструкции\", \"HelpDesk\", \"политика\", \"поддержка\", \"сервисы\"]",
+      "questions_answered": "",
+      "department": "IT",
+      "company": "ООО «Айти ТЭМПО»",
+      "last_updated": "2026-04-03"
+    }
+  },
+  {
+    "path": "data/05_it/it_support.md",
+    "meta": {
+      "title": "ИТ-поддержка",
+      "description": "Инструкция по решению проблем с сетью и интернетом",
+      "tags": "[\"ИТ\", \"поддержка\", \"сеть\", \"интернет\", \"проблемы\", \"контакты\"]",
+      "questions_answered": "",
+      "department": "IT",
+      "company": "ООО «Айти ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/05_it/pc_procurement.md",
+    "meta": {
+      "title": "Требования к закупке ПК и оргтехники",
+      "description": "Параметры для закупки компьютеров: офисные и конструкторские",
+      "tags": "[\"ПК\", \"закупка\", \"компьютеры\", \"требования\", \"оргтехника\", \"параметры\"]",
+      "questions_answered": "",
+      "department": "IT",
+      "company": "ООО «Айти ТЭМПО»",
+      "last_updated": "2025-01-01"
+    }
+  },
+  {
+    "path": "data/06_social/index.md",
+    "meta": {
+      "title": "Социальная сфера",
+      "description": "Социальные программы, льготы и отдых для сотрудников холдинга",
+      "tags": "[\"социалка\", \"отдых\", \"льготы\", \"березка\"]",
+      "questions_answered": "",
+      "department": "Social",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/06_social/berezka/index.md",
+    "meta": {
+      "title": "База отдыха «Березка»",
+      "description": "Цены и услуги базы отдыха «Березка» для сотрудников",
+      "tags": "[\"березка\", \"отдых\", \"цены\", \"база отдыха\"]",
+      "questions_answered": "",
+      "department": "Social",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-10"
+    }
+  },
+  {
+    "path": "data/06_social/berezka/price_list.md",
+    "meta": {
+      "title": "База отдыха «Березка» — цены и услуги",
+      "description": "Прейскурант на платные услуги корпоративной базы отдыха",
+      "tags": "[\"Березка\", \"база отдыха\", \"цены\", \"корпоратив\", \"отдых\", \"аренда\"]",
+      "questions_answered": "",
+      "department": "Social",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/07_kalendar/calendar_data_2026.md",
+    "meta": {
+      "title": "Производственный календарь 2026 - Полные данные",
+      "description": "Полные текстовые данные производственного календаря на 2026 год со всеми праздничными, рабочими днями и статистикой",
+      "tags": "[\"календарь\", \"2026\", \"праздники\", \"рабочие дни\", \"выходные\", \"сокращенные дни\", \"статистика\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "GK TEMPO",
+      "last_updated": "2026-04-09"
+    }
+  },
+  {
+    "path": "data/07_kalendar/index.md",
+    "meta": {
+      "title": "Производственный календарь ГК ТЭМПО",
+      "description": "Производственный календарь с рабочими, выходными, праздничными и сокращенными днями",
+      "tags": "[\"календарь\", \"рабочие дни\", \"выходные\", \"праздники\", \"сокращенные дни\", \"график работы\"]",
+      "questions_answered": "",
+      "department": "HR",
+      "company": "ГК «ТЭМПО»",
+      "last_updated": "2026-04-09"
+    }
+  },
+  {
+    "path": "data/it/index.md",
+    "meta": {
+      "title": "ООО АЙТИ \"ТЭМПО\"",
+      "description": "Главная страница раздела ООО АЙТИ \"ТЭМПО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ООО АЙТИ \"ТЭМПО\"",
+      "last_updated": "2025-02-15"
+    }
+  },
+  {
+    "path": "data/it/регламент.md",
+    "meta": {
+      "title": "Тест 1",
+      "category": "Информационный документ",
+      "company_id": "it"
+    }
+  },
+  {
+    "path": "data/it/Техническое_задание_ЦОД_(серверная)_АйТи.md",
+    "meta": {
+      "title": "Техническое задание на монтаж волоконно-оптической линии связи и закупку оборудования для нового здания ЦОД",
+      "category": "Техническое задание",
+      "company_id": "it"
+    }
+  },
+  {
+    "path": "data/it/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/itz/index.md",
+    "meta": {
+      "title": "АО ИТЗ",
+      "description": "Главная страница раздела АО ИТЗ",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО ИТЗ",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/itz/location/in_tempo.md",
+    "meta": {
+      "title": "Расположение на территории АО ИТЗ",
+      "description": "Координаты цехов и складов на внутренней территории предприятия",
+      "tags": "[\"локация\", \"цеха\", \"карты\", \"ТЭМПО\"]",
+      "questions_answered": "",
+      "department": "Production",
+      "company": "АО «ИТЗ»",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/kmk/index.md",
+    "meta": {
+      "title": "АО КМК \"ТЭМПО\"",
+      "description": "Главная страница раздела АО КМК \"ТЭМПО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО КМК \"ТЭМПО\"",
+      "last_updated": "2026-05-22"
+    }
+  },
+  {
+    "path": "data/kmk/Письмо_Логунову.md",
+    "meta": {
+      "title": "Запрос на закупку сетевого оборудования",
+      "category": "Служебная записка",
+      "company_id": "kmk"
+    }
+  },
+  {
+    "path": "data/kmk/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/kmk/location/kabinets.md",
+    "meta": {
+      "title": "Справочник кабинетов АО КМК ТЭМПО (АБК-2)",
+      "description": "Номера кабинетов и расположение подразделений АО КМК ТЭМПО в здании АБК-2",
+      "tags": "[\"кабинеты\", \"КМК\", \"АБК-2\", \"расположение\", \"подразделения\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО «КМК \\\"ТЭМПО\\\"»",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/kzmk/index.md",
+    "meta": {
+      "title": "АО КЗМК \"ТЭМПО\"»",
+      "description": "Главная страница раздела АО КЗМК \"ТЭМПО\"»",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО КЗМК \"ТЭМПО\"»",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/kzmk/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/metiz/index.md",
+    "meta": {
+      "title": "ООО Технотрон-Метиз",
+      "description": "Главная страница раздела ООО Технотрон-Метиз",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ООО Технотрон-Метиз",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/metiz/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/ntz/index.md",
+    "meta": {
+      "title": "АО НТЗ \"ТЭМ-ПО\"",
+      "description": "Главная страница раздела АО НТЗ \"ТЭМ-ПО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО НТЗ \"ТЭМ-ПО\"",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/ntz/location/in_tempo.md",
+    "meta": {
+      "title": "Расположение на территории АО НТЗ ТЭМПО",
+      "description": "Координаты цехов и складов на внутренней территории предприятия",
+      "tags": "[\"локация\", \"цеха\", \"карты\", \"ТЭМПО\"]",
+      "questions_answered": "",
+      "department": "Production",
+      "company": "АО «НТЗ \\\"ТЭМ-ПО\\\"»",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/port/index.md",
+    "meta": {
+      "title": "ООО ТЭМПО-ПОРТ",
+      "description": "Главная страница раздела ООО ТЭМПО-ПОРТ",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "ООО ТЭМПО-ПОРТ",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/port/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/sks/index.md",
+    "meta": {
+      "title": "АО СКС \"ТЭМПО\"",
+      "description": "Главная страница раздела АО СКС \"ТЭМПО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО СКС \"ТЭМПО\"",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/sks/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/td/index.md",
+    "meta": {
+      "title": "АО ТД \"ТЭМПО\"",
+      "description": "Главная страница раздела АО ТД \"ТЭМПО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО ТД \"ТЭМПО\"",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/td/location/in_tempo.md",
+    "meta": {}
+  },
+  {
+    "path": "data/technotron/index.md",
+    "meta": {
+      "title": "АО ПТФК \"Технотрон\"",
+      "description": "Главная страница раздела АО ПТФК \"Технотрон\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО ПТФК \"Технотрон\"",
+      "last_updated": "2026-05-22"
+    }
+  },
+  {
+    "path": "data/technotron/graphics/canteen_schedule_technotron.md",
+    "meta": {
+      "title": "График обедов Технотрон",
+      "description": "Расписание обеденных перерывов для сотрудников АО «ПТФК «ТЕХНОТРОН»",
+      "tags": "[\"столовая\", \"обед\", \"график\", \"Технотрон\", \"АБК-3\", \"питание\"]",
+      "questions_answered": "",
+      "department": "Routine",
+      "company": "АО «ПТФК «ТЕХНОТРОН»",
+      "last_updated": "2026-01-01"
+    }
+  },
+  {
+    "path": "data/technotron/location/in_tempo.md",
+    "meta": {
+      "title": "Расположение на территории АО ПТФК \"Технотрон\"",
+      "description": "Координаты цехов и складов на внутренней территории предприятия",
+      "tags": "[\"локация\", \"цеха\", \"карты\", \"ТЭМПО\"]",
+      "questions_answered": "",
+      "department": "Production",
+      "company": "АО ПТФК \"Технотрон\"",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/zteo/index.md",
+    "meta": {
+      "title": "АО ПТФК \"ЗТЭО\"",
+      "description": "Главная страница раздела АО ПТФК \"ЗТЭО\"",
+      "tags": "[\"предприятие\", \"навигация\"]",
+      "questions_answered": "",
+      "department": "General",
+      "company": "АО ПТФК \"ЗТЭО\"",
+      "last_updated": "2026-04-20"
+    }
+  },
+  {
+    "path": "data/zteo/location/in_tempo.md",
+    "meta": {}
+  }
+]

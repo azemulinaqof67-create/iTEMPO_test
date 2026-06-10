@@ -13,7 +13,7 @@ import logging
 import socket
 import threading
 from threading import Lock
-from typing import Dict, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -25,13 +25,14 @@ from qdrant_client import QdrantClient
 from src.core.config import Config
 from src.core.exceptions import ConfigError
 
+if TYPE_CHECKING:
+    from fastembed import SparseTextEmbedding
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Proxy helper
 # ---------------------------------------------------------------------------
-
-
 
 
 class GeminiEmbedder:
@@ -156,6 +157,7 @@ class GeminiEmbedder:
 _shared_qdrant: Optional[QdrantClient] = None
 _qdrant_lock = Lock()
 
+
 class ClientManager:
     """
     Thread-safe менеджер клиентов с async support.
@@ -168,13 +170,14 @@ class ClientManager:
 
     def __init__(self, config: Config):
         self.config = config
-        self._embedder: Optional[Union["SentenceTransformer", "GeminiEmbedder"]] = None  # noqa: F821
+        self._embedder: Optional[GeminiEmbedder] = None
         self._gemini: Optional[object] = None  # По умолчанию (для совместимости)
-        self._gemini_clients: Dict[str, object] = {} # Кеш клиентов по api_version
+        self._gemini_clients: Dict[str, object] = {}  # Кеш клиентов по api_version
         self._gemini_live: Optional[object] = None  # genai.Client for Live API
         self._embedder_api_key: Optional[str] = None  # API key for current _embedder
         self._gemini_http_client: Optional[httpx.Client] = None
-        self._http_client: Optional[httpx.Client] = None # Добавлено для совместимости с get_http_client
+        self._http_client: Optional[httpx.Client] = None  # Добавлено для совместимости с get_http_client
+        self._sparse_embedder: Optional[object] = None
         self._init_lock = Lock()
 
         # Менеджер API ключей для fallback
@@ -185,13 +188,15 @@ class ClientManager:
         # чтобы не пробовать тот же ключ до снятия лимита.
         reset_interval = 65 if config.api_keys and len(config.api_keys) > 1 else 3600
         # Enable auto_rotate for per-request key rotation
-        self.api_key_manager = ApiKeyManager(config.api_keys, reset_interval=reset_interval, auto_rotate=True) if config.api_keys else None
+        self.api_key_manager = (
+            ApiKeyManager(config.api_keys, reset_interval=reset_interval, auto_rotate=True) if config.api_keys else None
+        )
 
     @classmethod
     def get_instance(cls, config: Optional[Config] = None) -> "ClientManager":
         """
         Потокобезопасный синглтон, уникальный для каждого потока (thread-local).
-        Это предотвращает ошибки "Future attached to a different loop" 
+        Это предотвращает ошибки "Future attached to a different loop"
         при использовании aiohttp внутри genai.Client.
         """
         if getattr(cls._local, "instance", None) is None:
@@ -245,6 +250,18 @@ class ClientManager:
         self._gemini_http_client = httpx.Client(proxy=proxy, timeout=60.0)
         return self._gemini_http_client
 
+    def _get_http_options(self, api_version: str) -> types.HttpOptions:
+        """
+        Создает HttpOptions с отключенным авторетраем на уровне SDK.
+        Это необходимо, так как у нас есть своя логика ротации ключей и моделей,
+        и авторетрай SDK вносит задержку (до 12 секунд на один Rate Limit).
+        """
+        return types.HttpOptions(
+            api_version=api_version,
+            httpx_client=self.get_gemini_http_client(),
+            retry_options=types.HttpRetryOptions(attempts=1),
+        )
+
     # ------------------------------------------------------------------
     # Публичные методы безопасного пересоздания клиентов
     # (используются из text.py и embeddings.py вместо прямого доступа к _gemini)
@@ -265,10 +282,7 @@ class ClientManager:
         resolved_version = api_version or (
             self.config.text_api_version or self._get_api_version_for_model(self.config.text_model)
         )
-        http_options = types.HttpOptions(
-            api_version=resolved_version,
-            httpxClient=self.get_gemini_http_client(),
-        )
+        http_options = self._get_http_options(resolved_version)
         return genai.Client(api_key=api_key, http_options=http_options)
 
     def recreate_embedder_client(self, api_key: str) -> None:
@@ -277,10 +291,7 @@ class ClientManager:
 
         Вызывается при смене API-ключа из EmbeddingService при 429.
         """
-        http_options = types.HttpOptions(
-            api_version=self.config.embedding_api_version,
-            httpxClient=self.get_gemini_http_client(),
-        )
+        http_options = self._get_http_options(self.config.embedding_api_version)
         new_gemini_client = genai.Client(api_key=api_key, http_options=http_options)
         new_embedder = GeminiEmbedder(
             model_name=self.config.embedding_model,
@@ -311,19 +322,13 @@ class ClientManager:
         if self._gemini:
             logger.info("  - Создание нового Gemini Client (модель: %s)", self.config.text_model)
             api_version = self.config.text_api_version or self._get_api_version_for_model(self.config.text_model)
-            http_options = types.HttpOptions(
-                api_version=api_version, 
-                httpxClient=self.get_gemini_http_client()
-            )
+            http_options = self._get_http_options(api_version)
             new_gemini = genai.Client(api_key=api_key, http_options=http_options)
             logger.info("    ✓ Новый Gemini Client создан")
 
         if self._embedder:
             logger.info("  - Создание нового Embedder (модель: %s)", self.config.embedding_model)
-            http_options = types.HttpOptions(
-                api_version=self.config.embedding_api_version, 
-                httpxClient=self.get_gemini_http_client()
-            )
+            http_options = self._get_http_options(self.config.embedding_api_version)
             gemini_client = genai.Client(api_key=api_key, http_options=http_options)
             new_embedder = GeminiEmbedder(
                 model_name=self.config.embedding_model,
@@ -334,7 +339,7 @@ class ClientManager:
 
         if self._gemini_live:
             logger.info("  - Создание нового Live API Client")
-            http_options = types.HttpOptions(api_version=self.config.live_api_version, httpxClient=self.get_gemini_http_client())
+            http_options = self._get_http_options(self.config.live_api_version)
             new_gemini_live = genai.Client(api_key=api_key, http_options=http_options)
             logger.info("    ✓ Новый Live API Client создан")
 
@@ -398,11 +403,15 @@ class ClientManager:
         Использует Gemini Embedding API.
         """
         target_model = model_name or self.config.embedding_model
-        
+
         # Если передан конкретный ключ или модель и они отличаются от текущих - сбрасываем кэш
-        if (api_key and self._embedder_api_key != api_key) or (model_name and self._embedder and self._embedder.model_name != model_name):
+        if (api_key and self._embedder_api_key != api_key) or (
+            model_name and self._embedder and self._embedder.model_name != model_name
+        ):
             with self._init_lock:
-                if (api_key and self._embedder_api_key != api_key) or (model_name and self._embedder and self._embedder.model_name != model_name):
+                if (api_key and self._embedder_api_key != api_key) or (
+                    model_name and self._embedder and self._embedder.model_name != model_name
+                ):
                     self._embedder = None
 
         if self._embedder is None:
@@ -414,15 +423,12 @@ class ClientManager:
                     except ImportError as e:
                         raise ConfigError("google-genai SDK не установлен") from e
 
-                    http_options = types.HttpOptions(
-                        api_version=self.config.embedding_api_version,
-                        httpxClient=self.get_gemini_http_client(),
-                    )
-                    
+                    http_options = self._get_http_options(self.config.embedding_api_version)
+
                     resolved_key = api_key or (
                         self.api_key_manager.get_current_key() if self.api_key_manager else self.config.gemini_api_key
                     )
-                    
+
                     gemini_client = genai.Client(api_key=resolved_key, http_options=http_options)
 
                     self._embedder = GeminiEmbedder(
@@ -431,27 +437,57 @@ class ClientManager:
                         output_dimensionality=self.config.vector_size,
                     )
                     self._embedder_api_key = resolved_key
-                    logger.debug("Используется Gemini Embedding API: %s (key: ...%s, dim: %d)", target_model, resolved_key[-4:], self.config.vector_size)
+                    logger.debug(
+                        "Используется Gemini Embedding API: %s (key: ...%s, dim: %d)",
+                        target_model,
+                        resolved_key[-4:],
+                        self.config.vector_size,
+                    )
 
         return self._embedder
+
+    def get_sparse_embedder(self) -> "SparseTextEmbedding":
+        """
+        Thread-safe lazy init для SparseTextEmbedding (Qdrant/bm25).
+        """
+        if self._sparse_embedder is None:
+            with self._init_lock:
+                if self._sparse_embedder is None:
+                    try:
+                        from fastembed import SparseTextEmbedding
+                    except ImportError as e:
+                        raise ConfigError("fastembed SDK не установлен") from e
+                    logger.info("--- [SPARSE EMBEDDER INIT] Creating SparseTextEmbedding(model_name='Qdrant/bm25') ---")
+                    self._sparse_embedder = SparseTextEmbedding(model_name="Qdrant/bm25")
+        return self._sparse_embedder
 
     def get_gemini_client(self, api_version: Optional[str] = None, api_key: Optional[str] = None):
         """
         Создаёт (или возвращает кешированный) Gemini Client.
 
-        Кеш учитывает пару (api_version, api_key), поэтому ротация ключей
-        гарантированно создаёт новый клиент под нужный ключ.
+        Кеш учитывает пару (api_version, api_key) и текущий Event Loop,
+        чтобы предотвратить ошибки "Future attached to a different loop".
 
         Args:
             api_version: Версия API (v1 / v1beta). По умолчанию из конфига.
             api_key: API-ключ. По умолчанию из api_key_manager / конфига.
         """
-        target_version = api_version or self.config.text_api_version or self._get_api_version_for_model(self.config.text_model)
+        import asyncio
+
+        target_version = (
+            api_version or self.config.text_api_version or self._get_api_version_for_model(self.config.text_model)
+        )
         resolved_key = api_key or (
             self.api_key_manager.get_current_key() if self.api_key_manager else self.config.gemini_api_key
         )
 
-        cache_key = f"{target_version}::{resolved_key}"
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            loop_id = "sync"
+
+        cache_key = f"{target_version}::{resolved_key}::loop_{loop_id}"
 
         if cache_key not in self._gemini_clients:
             with self._init_lock:
@@ -463,10 +499,7 @@ class ClientManager:
                         raise ConfigError("google-genai SDK не установлен") from e
 
                     logger.debug("    → Создание клиента api_version=%s key=...%s", target_version, resolved_key[-4:])
-                    http_options = types.HttpOptions(
-                        api_version=target_version, 
-                        httpxClient=self.get_gemini_http_client()
-                    )
+                    http_options = self._get_http_options(target_version)
                     client = genai.Client(api_key=resolved_key, http_options=http_options)
                     self._gemini_clients[cache_key] = client
 
@@ -478,28 +511,38 @@ class ClientManager:
 
     def get_gemini_client_for_live_api(self):
         """
-        Thread-safe lazy init Gemini Client для Live API с кешированием.
+        Thread-safe lazy init Gemini Client для Live API с кешированием по Event Loop.
 
         Live API требует v1beta версию API для WebSocket соединений.
         """
-        if self._gemini_live is None:
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            loop_id = "sync"
+
+        if not hasattr(self, "_gemini_live_clients"):
+            self._gemini_live_clients = {}
+
+        cache_key = f"live::loop_{loop_id}"
+
+        if cache_key not in self._gemini_live_clients:
             with self._init_lock:
-                if self._gemini_live is None:
+                if cache_key not in self._gemini_live_clients:
                     # Live API требует v1beta для WebSocket соединений
-                    http_options = types.HttpOptions(
-                        api_version=self.config.live_api_version,
-                        httpxClient=self.get_gemini_http_client(),
-                    )
+                    http_options = self._get_http_options(self.config.live_api_version)
                     api_key = (
                         self.api_key_manager.get_current_key() if self.api_key_manager else self.config.gemini_api_key
                     )
-                    self._gemini_live = genai.Client(api_key=api_key, http_options=http_options)
-                    logger.debug(
-                        "    → Gemini Live API Client создан (api_version=%s)",
-                        self.config.live_api_version,
-                    )
+                    client = genai.Client(api_key=api_key, http_options=http_options)
+                    self._gemini_live_clients[cache_key] = client
 
-        return self._gemini_live
+                    if self._gemini_live is None:
+                        self._gemini_live = client
+
+        return self._gemini_live_clients[cache_key]
 
     def _get_api_version_for_model(self, model_name: str) -> str:
         """
@@ -566,3 +609,4 @@ class ClientManager:
             self._gemini_clients = {}
             self._gemini_live = None
             self._embedder = None
+            self._sparse_embedder = None

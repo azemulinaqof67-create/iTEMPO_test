@@ -37,9 +37,11 @@ dependencies = [
     "asyncpg>=0.31.0",
     "python-socks>=2.8.1",
     "aiohttp>=3.13.5",
-    "aiosqlite>=0.22.1",
     "langgraph>=1.1.9",
     "python-multipart>=0.0.30",
+    "aiosqlite>=0.22.1",
+    "psycopg[binary]>=3.1",
+    "langgraph-checkpoint-postgres>=2.0",
 ]
 
 [build-system]

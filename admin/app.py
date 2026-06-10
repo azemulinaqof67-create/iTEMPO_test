@@ -30,6 +30,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+BACKUP_RETENTION_COUNT = 30
+
 # Глобальное состояние (устанавливается при запуске)
 _config = None
 _assistant = None
@@ -47,10 +49,11 @@ _pending_changes = {
 _ws_clients: Set[WebSocket] = set()
 
 
-def _extract_doc_title(file_path: Path) -> Optional[str]:
-    """Извлечь заголовок из .md файла (frontmatter title или # H1)."""
+def _extract_doc_metadata(file_path: Path) -> dict:
+    """Извлечь метаданные из .md файла (frontmatter title, status или # H1)."""
+    meta = {"title": None, "status": "approved"}
     if file_path.suffix.lower() != ".md":
-        return None
+        return meta
     try:
         # Читаем только первые 20 строк для скорости
         lines = []
@@ -61,24 +64,41 @@ def _extract_doc_title(file_path: Path) -> Optional[str]:
                     break
                 lines.append(line.strip())
         
-        # Сначала ищем title: в yaml frontmatter
         in_frontmatter = False
         for line in lines:
             if line == "---":
                 in_frontmatter = not in_frontmatter
                 continue
-            if in_frontmatter or line.startswith("title:"):
+            if in_frontmatter:
                 if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip()
-                    return title.strip('"').strip("'")
+                    meta["title"] = line.split(":", 1)[1].strip().strip('"').strip("'")
+                elif line.startswith("status:"):
+                    meta["status"] = line.split(":", 1)[1].strip().strip('"').strip("'")
 
         # Если не нашли, ищем H1 заголовок (# Заголовок)
-        for line in lines:
-            if line.startswith("# "):
-                return line[2:].strip()
+        if not meta["title"]:
+            for line in lines:
+                if line.startswith("# "):
+                    meta["title"] = line[2:].strip()
+                    break
     except Exception:
         pass
-    return None
+    return meta
+
+
+def _count_files_in_dir(directory: Path) -> int:
+    """Рекурсивно считает файлы с допустимыми расширениями, исключая файлы index.md."""
+    if not directory.exists() or not directory.is_dir():
+        return 0
+    count = 0
+    try:
+        for p in directory.rglob("*"):
+            if p.is_file() and p.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                if p.name != "index.md":
+                    count += 1
+    except Exception:
+        pass
+    return count
 
 
 def create_admin_app(config, assistant=None) -> FastAPI:
@@ -111,6 +131,27 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         token = request.cookies.get("admin_token")
         if token and token in _active_sessions:
             return _active_sessions[token]
+            
+        # Проверяем прозрачную авторизацию от IIS/Nginx (SSO/NTLM)
+        remote_user = request.headers.get("X-Remote-User")
+        if remote_user and _assistant and _assistant.chat_history:
+            # remote_user может прийти с доменом, например DOMAIN\user
+            username = remote_user.split("\\")[-1].strip()
+            
+            admin_user = await _assistant.chat_history.get_admin_user_by_username(username)
+            if admin_user:
+                return admin_user
+            else:
+                # Если пользователь есть в AD и прошел через IIS, но его нет в нашей БД, 
+                # мы можем автоматически выдать ему роль viewer на лету.
+                return {
+                    "id": -1,
+                    "username": username,
+                    "role": "viewer",
+                    "company_id": None,
+                    "company_ids": [],
+                    "permissions": []
+                }
         
         # Проверяем Basic Auth (для обратной совместимости/скриптов)
         auth = request.headers.get("Authorization", "")
@@ -531,66 +572,165 @@ def create_admin_app(config, assistant=None) -> FastAPI:
     # ─── Документы ────────────────────────────────────────────────────────
 
     @app.get("/api/documents")
-    async def get_documents(user: Dict = Depends(require_permission("view_documents"))):
+    async def get_documents(path: str = "", user: Dict = Depends(require_permission("view_documents"))):
         from src.core.constants import COMPANIES
         data_path = Path(_config.data_path)
-        docs = []
         
-        # Определяем, какие папки сканировать
-        user_company = user.get("company_id")
-        is_restricted = user["role"] != "superadmin" and user_company and user_company != "all"
+        CATEGORIES_NAMES = {
+            "hr": "👥 Кадры и мотивация (hr)",
+            "routine": "📋 Внутренний распорядок и регламенты (routine)",
+            "logistics": "🚚 Транспорт и логистика (logistics)",
+            "locations": "📍 Расположение и навигация цехов (locations)",
+            "it_support": "🔧 ИТ-поддержка пользователей (it_support)",
+            "infrastructure": "⚙️ Инфраструктура и ЦОД (infrastructure)",
+            "helpdesk": "🎟 Система заявок Helpdesk (helpdesk)",
+            "social": "🏖 Социальная сфера и отдых (social)",
+            "calendar": "📅 Производственный календарь (calendar)",
+            "company": "🏢 О компании и руководство (company)",
+            "general": "🔌 Корневой раздел (general)"
+        }
         
-        # Общие документы (сканируем только если не ограничены)
-        if not is_restricted:
-            common_path = data_path / "common"
-            if common_path.exists():
-                for f in sorted(common_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": None,
-                            "company_name": "Все предприятия",
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Документы предприятий
-        companies_to_scan = [user_company] if is_restricted else list(COMPANIES.keys())
-        for company_id in companies_to_scan:
-            company_path = data_path / company_id
-            if company_path.exists():
-                for f in sorted(company_path.rglob("*")):
-                    if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                        docs.append({
-                            "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                            "name": f.name,
-                            "title": _extract_doc_title(f),
-                            "company": company_id,
-                            "company_name": COMPANIES.get(company_id, company_id),
-                            "size": f.stat().st_size,
-                            "modified": f.stat().st_mtime,
-                        })
-                        
-        # Остальные папки (сканируем только если не ограничены)
-        if not is_restricted:
+        # Нормализуем путь
+        normalized_path = path.strip().replace("\\", "/").strip("/")
+        
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        is_restricted = not is_super
+        
+        parts = Path(normalized_path).parts if normalized_path else ()
+        
+        # Проверка прав доступа
+        if normalized_path:
+            first_segment = parts[0] if parts else ""
+            if is_restricted and first_segment not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+                
+        target_dir = (data_path / normalized_path).resolve()
+        if not target_dir.exists() or not target_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Директория не найдена")
+            
+        # Защита от выхода за пределы data_path
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            raise HTTPException(status_code=403, detail="Недопустимый путь")
+            
+        items = []
+        
+        if not normalized_path:
+            # Корневой уровень
+            allowed_dirs = set(COMPANIES.keys()) | {"common"}
+            if is_restricted:
+                allowed_dirs = {d for d in allowed_dirs if d in user_company_ids}
+                
             for item in sorted(data_path.iterdir()):
-                if item.is_dir() and item.name not in {*COMPANIES, "common", ".chunks_cache"}:
-                    for f in sorted(item.rglob("*")):
-                        if f.is_file() and f.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                            docs.append({
-                                "path": str(f.relative_to(data_path)).replace("\\", "/"),
-                                "name": f.name,
-                                "title": _extract_doc_title(f),
-                                "company": None,
-                                "company_name": f"Общие / {item.name}",
-                                "size": f.stat().st_size,
-                                "modified": f.stat().st_mtime,
-                            })
-        return {"documents": docs, "total": len(docs)}
+                if item.is_dir():
+                    if item.name in allowed_dirs:
+                        items.append({
+                            "name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "files_count": _count_files_in_dir(item)
+                        })
+                    elif is_super and item.name not in {".chunks_cache"}:
+                        items.append({
+                            "name": COMPANIES.get(item.name, f"Папка / {item.name}") if item.name != "common" else "Общие документы",
+                            "path": item.name,
+                            "is_dir": True,
+                            "company_name": f"Папка / {item.name}",
+                            "files_count": _count_files_in_dir(item)
+                        })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    meta = _extract_doc_metadata(item)
+                    items.append({
+                        "name": item.name,
+                        "path": item.name,
+                        "is_dir": False,
+                        "title": meta["title"],
+                        "status": meta["status"],
+                        "company_name": "Все предприятия",
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+        else:
+            # Внутри какой-то директории
+            first_segment = parts[0] if parts else ""
+            company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment != "common" else "Общие документы"
+            
+            for item in sorted(target_dir.iterdir()):
+                rel_path = str(item.resolve().relative_to(data_path.resolve())).replace("\\", "/")
+                if item.is_dir() and item.name not in {".chunks_cache"}:
+                    items.append({
+                        "name": CATEGORIES_NAMES.get(item.name, item.name),
+                        "path": rel_path,
+                        "is_dir": True,
+                        "company_name": company_name,
+                        "files_count": _count_files_in_dir(item)
+                    })
+                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    meta = _extract_doc_metadata(item)
+                    items.append({
+                        "name": item.name,
+                        "path": rel_path,
+                        "is_dir": False,
+                        "title": meta["title"],
+                        "status": meta["status"],
+                        "company_name": company_name,
+                        "size": item.stat().st_size,
+                        "modified": item.stat().st_mtime
+                    })
+                    
+        # Конструируем хлебные крошки
+        breadcrumbs = [{"name": "🌍 База знаний", "path": ""}]
+        current_accumulated = []
+        for part in parts:
+            current_accumulated.append(part)
+            part_path = "/".join(current_accumulated)
+            
+            name = part
+            if part in COMPANIES:
+                name = COMPANIES[part]
+            elif part in CATEGORIES_NAMES:
+                name = CATEGORIES_NAMES[part]
+            elif part == "common":
+                name = "Общие документы"
+                
+            breadcrumbs.append({"name": name, "path": part_path})
+            
+        return {
+            "current_path": normalized_path,
+            "breadcrumbs": breadcrumbs,
+            "items": items,
+            "total": len(items)
+        }
 
-    @app.post("/api/documents/preview")
+    class MkdirRequest(BaseModel):
+        path: str
+
+    @app.post("/api/documents/mkdir")
+    async def create_directory(body: MkdirRequest, user: Dict = Depends(require_permission("add_documents"))):
+        if not body.path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+            
+        data_path = Path(_config.data_path)
+        normalized_path = body.path.strip().replace("\\", "/").strip("/")
+        
+        parts = Path(normalized_path).parts
+        if not parts:
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=400)
+            
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        
+        first_segment = parts[0]
+        if not is_super and first_segment not in user_company_ids:
+            raise HTTPException(status_code=403, detail="Нет прав на создание папки в этом разделе")
+            
+        target_dir = (data_path / normalized_path).resolve()
+        if not str(target_dir).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return {"success": True, "message": f"Папка создана: {normalized_path}"}
     async def preview_document(
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
@@ -608,13 +748,22 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if company_ids:
             selected_companies = [c.strip() for c in company_ids.split(",") if c.strip()]
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             # Проверяем все переданные компании
             for cid in selected_companies:
-                if cid != user["company_id"]:
+                if cid == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif cid not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
-            if company_id and company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
+            if company_id:
+                if company_id == "common":
+                    if "common" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
+                elif company_id not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
         
         raw_text = ""
         original_filename = ""
@@ -672,24 +821,24 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         # Получаем список выбранных компаний (поддерживаем обратную совместимость)
         company_ids = body.get("company_ids")
+        target_path = body.get("path")
+        
         if company_ids is None:
             # Если не передан список, берем одиночное поле
             company_id = body.get("company_id")
-            company_ids = [company_id] if company_id is not None else ["common"]
+            company_ids = [company_id] if company_id is not None else ["shared"]
             
-        # Превращаем 'common' и None/пустую строку в None (для общих)
+        # Превращаем 'shared', 'common' и None/пустую строку в None (для общих)
         company_ids_processed = []
         for cid in company_ids:
-            if cid in ("common", "", None):
+            if cid in ("shared", "common", "", None):
                 company_ids_processed.append(None)
             else:
                 company_ids_processed.append(cid)
 
-        # Проверка прав доступа: ограниченный админ может сохранять только в свою компанию
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
-            for cid in company_ids_processed:
-                if cid != user["company_id"]:
-                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
+        # Проверка прав доступа: ограниченный админ может сохранять только в разрешенные ему компании
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
 
         if not content.strip():
             return JSONResponse({"error": "Содержимое пустое"}, status_code=400)
@@ -700,56 +849,116 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Функция для адаптации YAML frontmatter для конкретного предприятия
         def adapt_frontmatter(md_text: str, target_cid: Optional[str]) -> str:
             import re
+            status_val = "approved" if is_super else "pending"
             # Ищем блок frontmatter в начале файла
             match = re.match(r"^---\s*\n(.*?)\n---\s*\n", md_text, re.DOTALL)
             if not match:
                 # Если frontmatter нет, мы можем добавить его
-                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "common"}"\n---\n\n'
+                fm = f'---\ntitle: "{Path(filename).stem}"\ncompany_id: "{target_cid or "shared"}"\nstatus: "{status_val}"\n---\n\n'
                 return fm + md_text
                 
             fm_content = match.group(1)
-            # Ищем company_id в существующем frontmatter
+            # Ищем company_id
             if re.search(r"^company_id\s*:", fm_content, re.MULTILINE):
-                # Заменяем значение
-                fm_content_updated = re.sub(
-                    r"^company_id\s*:.*$",
-                    f'company_id: "{target_cid or "common"}"',
-                    fm_content,
-                    flags=re.MULTILINE
-                )
+                fm_content = re.sub(r"^company_id\s*:.*$", f'company_id: "{target_cid or "shared"}"', fm_content, flags=re.MULTILINE)
             else:
-                # Добавляем company_id
-                fm_content_updated = fm_content + f'\ncompany_id: "{target_cid or "common"}"'
+                fm_content += f'\ncompany_id: "{target_cid or "shared"}"'
                 
-            return f"---\n{fm_content_updated}\n---\n" + md_text[match.end():]
-
-        for company_id in company_ids_processed:
-            if company_id:
-                target_dir = data_path / company_id
+            # Ищем status
+            if re.search(r"^status\s*:", fm_content, re.MULTILINE):
+                fm_content = re.sub(r"^status\s*:.*$", f'status: "{status_val}"', fm_content, flags=re.MULTILINE)
             else:
-                target_dir = data_path / "common"
-            target_dir.mkdir(parents=True, exist_ok=True)
+                fm_content += f'\nstatus: "{status_val}"'
+                
+            return f"---\n{fm_content}\n---\n" + md_text[match.end():]
 
+        def _backup_if_exists(target_file: Path):
+            import time
+            import shutil
+            if target_file.exists():
+                try:
+                    rel_p = target_file.parent.resolve().relative_to(data_path.resolve())
+                except ValueError:
+                    rel_p = Path("")
+                versions_dir = data_path / ".versions" / str(rel_p)
+                versions_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = versions_dir / f"{target_file.stem}_{int(time.time())}{target_file.suffix}"
+                shutil.copy2(str(target_file), str(backup_path))
+
+        if target_path:
+            target_path_norm = target_path.strip().replace("\\", "/").strip("/")
+            parts = Path(target_path_norm).parts
+            first_segment = parts[0] if parts else ""
+            
+            # Проверка прав доступа к целевой папке
+            if not is_super:
+                if first_segment in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение в общие документы")
+                elif first_segment not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+                    
+            target_dir = data_path / target_path_norm
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
             # Безопасное имя файла
             safe_name = _safe_filename(Path(filename).stem)
-            target_path = target_dir / f"{safe_name}.md"
+            file_path = target_dir / f"{safe_name}.md"
+            
+            # Адаптируем YAML frontmatter под целевую компанию
+            target_company_id = None if first_segment in ("shared", "common") else first_segment
+            adapted_content = adapt_frontmatter(content, target_company_id)
+            
+            _backup_if_exists(file_path)
+            file_path.write_text(adapted_content, encoding="utf-8")
+            logger.info(f"Document saved: {file_path}")
+            
+            saved_paths.append(str(file_path.relative_to(data_path)).replace("\\", "/"))
+            
+            if is_super:
+                # Добавляем в список изменений для индексации
+                _pending_changes["to_index"].add(str(file_path))
+                rel_path = str(file_path.relative_to(data_path)).replace("\\", "/")
+                _pending_changes["to_delete"].discard(rel_path)
+                # Запускаем автоматическое обновление index.md в фоне
+                asyncio.create_task(_update_index_file_with_ai(str(file_path), target_company_id))
+        else:
+            if not is_super:
+                for cid in company_ids_processed:
+                    if cid is None:
+                        if "common" not in user_company_ids and "shared" not in user_company_ids:
+                            raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+                    elif cid not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет прав на сохранение документов другого предприятия")
 
-            # Адаптируем YAML frontmatter под текущую компанию
-            adapted_content = adapt_frontmatter(content, company_id)
+            for company_id in company_ids_processed:
+                if company_id:
+                    target_dir = data_path / company_id
+                else:
+                    target_dir = data_path / "shared"
+                target_dir.mkdir(parents=True, exist_ok=True)
 
-            # Записываем файл
-            target_path.write_text(adapted_content, encoding="utf-8")
-            logger.info(f"Document saved: {target_path}")
+                # Безопасное имя файла
+                safe_name = _safe_filename(Path(filename).stem)
+                target_file_path = target_dir / f"{safe_name}.md"
 
-            # Добавляем в список изменений для индексации
-            _pending_changes["to_index"].add(str(target_path))
-            # Убираем из списка удаления на случай, если файл перезаписан
-            rel_path = str(target_path.relative_to(data_path)).replace("\\", "/")
-            _pending_changes["to_delete"].discard(rel_path)
-            saved_paths.append(rel_path)
+                # Адаптируем YAML frontmatter под текущую компанию
+                adapted_content = adapt_frontmatter(content, company_id)
 
-            # Запускаем автоматическое обновление index.md в фоне (на диске)
-            asyncio.create_task(_update_index_file_with_ai(str(target_path), company_id))
+                _backup_if_exists(target_file_path)
+                target_file_path.write_text(adapted_content, encoding="utf-8")
+                logger.info(f"Document saved: {target_file_path}")
+                
+                saved_paths.append(str(target_file_path.relative_to(data_path)).replace("\\", "/"))
+
+                if is_super:
+                    # Добавляем в список изменений для индексации
+                    _pending_changes["to_index"].add(str(target_file_path))
+                    # Убираем из списка удаления на случай, если файл перезаписан
+                    rel_path = str(target_file_path.relative_to(data_path)).replace("\\", "/")
+                    _pending_changes["to_delete"].discard(rel_path)
+                    # Запускаем автоматическое обновление index.md в фоне (на диске)
+                    asyncio.create_task(_update_index_file_with_ai(str(target_file_path), company_id))
 
         paths_str = ", ".join(saved_paths)
         return {
@@ -757,6 +966,191 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             "paths": saved_paths,
             "message": f"Документ сохранён на диск ({paths_str}). Автоматическое обновление index.md запущено. Для обновления векторной базы нажмите «Применить изменения»."
         }
+
+    # ─── Human-in-the-loop Document Upload / AI Metadata Generation ───
+
+    class MetadataRequest(BaseModel):
+        text: str
+        draft_title: str
+        organization: Optional[str] = None
+        category: Optional[str] = None
+
+    class MetadataResponse(BaseModel):
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+
+    @app.post("/api/generate_metadata", response_model=MetadataResponse)
+    async def generate_metadata(body: MetadataRequest, user: Dict = Depends(require_auth)):
+        if not _assistant or not _assistant.text_llm:
+            raise HTTPException(status_code=503, detail="ИИ-помощник недоступен")
+            
+        prompt = f"""Ты эксперт по разметке данных для RAG. Проанализируй текст корпоративного документа и его черновое название.
+Верни строго JSON объект с 5 ключами:
+1. "title": Короткое, официальное название на русском языке.
+2. "description": Краткое описание (1-2 предложения).
+3. "file_name": Переведи суть документа на английский и сформируй короткое имя файла в snake_case. Добавь расширение .md. Пример: "График отпусков" -> "vacation_schedule.md".
+4. "tags": Массив из 5-7 ключевых слов, синонимов или аббревиатур, которые относятся к теме (на русском).
+5. "questions_answered": Массив из 2-3 самых популярных вопросов сотрудников, на которые этот текст дает прямой ответ (например: "Как получить ДМС?").
+
+Черновое название: {body.draft_title}
+Текст документа:
+{body.text}"""
+
+        try:
+            # Используем структурированную генерацию
+            res = await _assistant.text_llm.generate_structured(
+                prompt=prompt,
+                response_schema=MetadataResponse,
+                temperature=0.0
+            )
+            if isinstance(res, dict):
+                return MetadataResponse(**res)
+            return res
+        except Exception as e:
+            logger.error(f"Error generating metadata: {e}")
+            raise HTTPException(status_code=500, detail=f"Ошибка генерации метаданных: {str(e)}")
+
+    class UploadRequest(BaseModel):
+        text: str
+        organization: str
+        category: str
+        title: str
+        description: str
+        file_name: str
+        tags: List[str]
+        questions_answered: List[str]
+        last_updated: Optional[str] = None
+
+    @app.post("/upload")
+    async def upload_document(body: UploadRequest, user: Dict = Depends(require_auth)):
+        # Проверка прав доступа
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+
+        if not is_super:
+            target_cid = None if body.organization == "shared" else body.organization
+            if target_cid is None:
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
+            elif target_cid not in user_company_ids:
+                raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
+
+        import re
+        import yaml
+        from datetime import datetime
+
+        # Санитизация file_name (только a-z, 0-9, _, .md)
+        stem = Path(body.file_name).stem.lower()
+        sanitized_stem = re.sub(r'[^a-z0-9_]', '', stem)
+        if not sanitized_stem:
+            sanitized_stem = "document"
+        file_name = f"{sanitized_stem}.md"
+
+        last_updated = body.last_updated
+        if not last_updated:
+            last_updated = datetime.now().strftime("%Y-%m-%d")
+        source_file = f"{body.organization}/{body.category}/{file_name}"
+
+        # Формируем YAML Front Matter в строго заданном порядке с красивым форматированием
+        ordered_keys = [
+            "organization",
+            "category",
+            "title",
+            "description",
+            "tags",
+            "questions_answered",
+            "last_updated",
+            "source_file",
+            "status"
+        ]
+        
+        yaml_lines = []
+        for key in ordered_keys:
+            if key == "organization":
+                val = body.organization
+            elif key == "category":
+                val = body.category
+            elif key == "title":
+                val = body.title
+            elif key == "description":
+                val = body.description
+            elif key == "tags":
+                val = body.tags
+            elif key == "questions_answered":
+                val = body.questions_answered
+            elif key == "last_updated":
+                val = last_updated
+            elif key == "source_file":
+                val = source_file
+            elif key == "status":
+                val = "approved" if is_super else "pending"
+
+            if val is None:
+                if key in ["tags", "questions_answered"]:
+                    val = []
+                else:
+                    val = ""
+
+            if key == "tags":
+                tags_str = ", ".join(f'"{t}"' for t in val)
+                yaml_lines.append(f"tags: [{tags_str}]")
+            elif key == "questions_answered":
+                yaml_lines.append("questions_answered:")
+                if not val:
+                    yaml_lines[-1] = "questions_answered: []"
+                else:
+                    for q in val:
+                        q_escaped = q.replace('"', '\\"')
+                        yaml_lines.append(f'  - "{q_escaped}"')
+            else:
+                val_escaped = str(val).replace('"', '\\"')
+                yaml_lines.append(f'{key}: "{val_escaped}"')
+
+        yaml_str = "\n".join(yaml_lines)
+        full_content = f"---\n{yaml_str}\n---\n\n{body.text.strip()}\n"
+
+        data_path = Path(_config.data_path)
+        target_dir = data_path / body.organization / body.category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        file_path = target_dir / file_name
+
+        try:
+            def _backup_if_exists(target_file: Path):
+                import time
+                import shutil
+                if target_file.exists():
+                    try:
+                        rel_p = target_file.parent.resolve().relative_to(data_path.resolve())
+                    except ValueError:
+                        rel_p = Path("")
+                    versions_dir = data_path / ".versions" / str(rel_p)
+                    versions_dir.mkdir(parents=True, exist_ok=True)
+                    backup_path = versions_dir / f"{target_file.stem}_{int(time.time())}{target_file.suffix}"
+                    shutil.copy2(str(target_file), str(backup_path))
+
+            _backup_if_exists(file_path)
+            file_path.write_text(full_content, encoding="utf-8")
+            logger.info(f"Document uploaded/saved: {file_path}")
+
+            if is_super:
+                # Добавляем в список изменений для индексации
+                _pending_changes["to_index"].add(str(file_path))
+                _pending_changes["to_delete"].discard(source_file)
+
+                # Запускаем автоматическое обновление index.md в фоне
+                asyncio.create_task(_update_index_file_with_ai(str(file_path), body.organization))
+
+            return {
+                "success": True,
+                "message": f"Документ сохранён как {source_file}. Автоматическое обновление index.md запущено. Для обновления векторной базы примените изменения."
+            }
+        except Exception as e:
+            logger.error(f"Error saving uploaded document: {e}")
+            raise HTTPException(status_code=500, detail=f"Не удалось сохранить файл: {str(e)}")
+
 
     class MoveDocumentRequest(BaseModel):
         path: str
@@ -778,25 +1172,34 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
 
         # Проверка прав по организации для ограниченных администраторов
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             try:
-                rel = source_path.relative_to(data_path)
-                if not rel.parts or rel.parts[0] != user["company_id"]:
+                rel = source_path.resolve().relative_to(data_path.resolve())
+                if not rel.parts:
+                    raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                first_part = rel.parts[0]
+                if first_part in ("shared", "common"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
+                elif first_part not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
             except ValueError:
                 raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
 
-            if body.company_id != user["company_id"]:
-                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в другую организацию")
+            target_cid = body.company_id or "shared"
+            if target_cid not in user_company_ids and target_cid != "shared":
+                raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
-        old_rel_path = str(source_path.relative_to(data_path)).replace("\\", "/")
+        old_rel_path = str(source_path.resolve().relative_to(data_path.resolve())).replace("\\", "/")
 
         # Определяем целевую папку
         if body.company_id:
             target_dir = data_path / body.company_id
         else:
-            target_dir = data_path / "common"
+            target_dir = data_path / "shared"
 
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / source_path.name
@@ -854,16 +1257,33 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(doc_path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
 
         if not full_path.exists():
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
 
-        full_path.unlink()
-        logger.info(f"Document deleted: {full_path}")
+        import time
+        import shutil
+        try:
+            rel_p = full_path.parent.resolve().relative_to(data_path.resolve())
+        except ValueError:
+            rel_p = Path("")
+        trash_dir = data_path / ".trash" / str(rel_p)
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        trash_path = trash_dir / f"{full_path.stem}_{int(time.time())}{full_path.suffix}"
+        shutil.move(str(full_path), str(trash_path))
+        logger.info(f"Document moved to trash: {full_path} -> {trash_path}")
         
         # Добавляем в список удаления
         _pending_changes["to_delete"].add(doc_path)
@@ -871,6 +1291,178 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         _pending_changes["to_index"].discard(str(full_path))
 
         return {"success": True, "message": "Документ удалён с диска. Для очистки векторной базы примените изменения."}
+
+    @app.post("/api/documents/approve")
+    async def approve_document(request: Request, user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Только супер-администратор может одобрять документы")
+            
+        body = await request.json()
+        doc_path = body.get("path", "")
+        if not doc_path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+            
+        data_path = Path(_config.data_path)
+        full_path = (data_path / doc_path).resolve()
+        
+        if not str(full_path).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        if not full_path.exists():
+            return JSONResponse({"error": "Файл не найден"}, status_code=404)
+            
+        content = full_path.read_text(encoding="utf-8")
+        import re
+        if re.search(r"^status\s*:\s*\"pending\"", content, re.MULTILINE):
+            content = re.sub(r"^status\s*:\s*\"pending\"", 'status: "approved"', content, flags=re.MULTILINE)
+        else:
+            return {"success": True, "message": "Документ уже одобрен"}
+            
+        full_path.write_text(content, encoding="utf-8")
+        _pending_changes["to_index"].add(str(full_path))
+        return {"success": True, "message": "Документ одобрен и добавлен в очередь на индексацию."}
+
+    @app.get("/api/documents/versions")
+    async def get_document_versions(path: str, user: Dict = Depends(require_permission("view_documents"))):
+        data_path = Path(_config.data_path)
+        full_path = (data_path / path).resolve()
+        if not str(full_path).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        try:
+            rel_p = full_path.parent.relative_to(data_path)
+        except ValueError:
+            rel_p = Path("")
+            
+        versions_dir = data_path / ".versions" / str(rel_p)
+        if not versions_dir.exists():
+            return {"versions": []}
+            
+        prefix = f"{full_path.stem}_"
+        versions = []
+        for item in versions_dir.iterdir():
+            if item.is_file() and item.name.startswith(prefix):
+                try:
+                    ts_str = item.stem[len(prefix):]
+                    ts = int(ts_str)
+                    versions.append({
+                        "name": item.name,
+                        "path": str(item.relative_to(data_path)).replace("\\", "/"),
+                        "timestamp": ts,
+                        "size": item.stat().st_size
+                    })
+                except ValueError:
+                    pass
+        versions.sort(key=lambda x: x["timestamp"], reverse=True)
+        return {"versions": versions}
+
+    class RestoreVersionRequest(BaseModel):
+        original_path: str
+        version_path: str
+
+    @app.post("/api/documents/versions/restore")
+    async def restore_document_version(body: RestoreVersionRequest, user: Dict = Depends(require_permission("edit_documents"))):
+        data_path = Path(_config.data_path)
+        orig_full = (data_path / body.original_path).resolve()
+        ver_full = (data_path / body.version_path).resolve()
+        
+        if not str(orig_full).startswith(str(data_path.resolve())) or not str(ver_full).startswith(str(data_path.resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        if not ver_full.exists():
+            return JSONResponse({"error": "Версия не найдена"}, status_code=404)
+            
+        import shutil
+        import time
+        # Backup current if exists
+        if orig_full.exists():
+            try:
+                rel_p = orig_full.parent.resolve().relative_to(data_path.resolve())
+            except ValueError:
+                rel_p = Path("")
+            versions_dir = data_path / ".versions" / str(rel_p)
+            versions_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = versions_dir / f"{orig_full.stem}_{int(time.time())}{orig_full.suffix}"
+            shutil.copy2(str(orig_full), str(backup_path))
+            
+        shutil.copy2(str(ver_full), str(orig_full))
+        
+        # update pending changes
+        _pending_changes["to_index"].add(str(orig_full))
+        _pending_changes["to_delete"].discard(body.original_path)
+        
+        return {"success": True, "message": "Версия восстановлена"}
+
+    @app.get("/api/documents/trash")
+    async def get_trash(user: Dict = Depends(require_permission("delete_documents"))):
+        data_path = Path(_config.data_path)
+        trash_dir = data_path / ".trash"
+        
+        items = []
+        if trash_dir.exists():
+            for item in trash_dir.rglob("*"):
+                if item.is_file():
+                    rel_p = item.relative_to(trash_dir)
+                    items.append({
+                        "name": item.name,
+                        "path": str(item.relative_to(data_path)).replace("\\", "/"),
+                        "original_path": str(rel_p).replace("\\", "/"),
+                        "size": item.stat().st_size,
+                        "deleted_at": item.stat().st_mtime
+                    })
+        items.sort(key=lambda x: x["deleted_at"], reverse=True)
+        return {"items": items}
+
+    @app.post("/api/documents/trash/restore")
+    async def restore_from_trash(request: Request, user: Dict = Depends(require_permission("delete_documents"))):
+        body = await request.json()
+        trash_path = body.get("path", "")
+        if not trash_path:
+            return JSONResponse({"error": "Путь не указан"}, status_code=400)
+            
+        data_path = Path(_config.data_path)
+        full_trash_path = (data_path / trash_path).resolve()
+        
+        if not str(full_trash_path).startswith(str((data_path / ".trash").resolve())):
+            return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
+            
+        if not full_trash_path.exists():
+            return JSONResponse({"error": "Файл не найден в корзине"}, status_code=404)
+            
+        import shutil
+        import re
+        stem = full_trash_path.stem
+        match = re.search(r"^(.*)_(\d+)$", stem)
+        if match:
+            orig_name = f"{match.group(1)}{full_trash_path.suffix}"
+        else:
+            orig_name = full_trash_path.name
+            
+        orig_rel_dir = full_trash_path.parent.relative_to((data_path / ".trash").resolve())
+        orig_dir = data_path / orig_rel_dir
+        orig_dir.mkdir(parents=True, exist_ok=True)
+        orig_path = orig_dir / orig_name
+        
+        shutil.move(str(full_trash_path), str(orig_path))
+        
+        rel_orig = str(orig_path.relative_to(data_path)).replace("\\", "/")
+        _pending_changes["to_index"].add(str(orig_path))
+        _pending_changes["to_delete"].discard(rel_orig)
+        
+        return {"success": True, "message": "Файл восстановлен из корзины"}
+        
+    @app.delete("/api/documents/trash/empty")
+    async def empty_trash(user: Dict = Depends(require_permission("delete_documents"))):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Только супер-администратор может очищать корзину")
+            
+        data_path = Path(_config.data_path)
+        trash_dir = data_path / ".trash"
+        if trash_dir.exists():
+            import shutil
+            shutil.rmtree(str(trash_dir))
+        return {"success": True, "message": "Корзина очищена"}
+
 
     @app.get("/api/documents/content")
     async def get_document_content(path: str, user: Dict = Depends(require_permission("view_documents"))):
@@ -883,9 +1475,17 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not str(full_path).startswith(str(data_path.resolve())):
             return JSONResponse({"error": "Недопустимый путь"}, status_code=403)
 
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             parts = Path(path).parts
-            if not parts or parts[0] != user["company_id"]:
+            if not parts:
+                raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            first_part = parts[0]
+            if first_part == "common":
+                if "common" not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
+            elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
 
         if not full_path.exists():
@@ -905,13 +1505,19 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] != "superadmin" and user["company_id"] and user["company_id"] != "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if not is_super:
             filtered_index = []
             for path in to_index:
                 try:
-                    rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == user["company_id"]:
-                        filtered_index.append(path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            filtered_index.append(path)
+                        elif first_part in user_company_ids:
+                            filtered_index.append(path)
                 except ValueError:
                     pass
             to_index = filtered_index
@@ -919,8 +1525,12 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             filtered_delete = []
             for path in to_delete:
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == user["company_id"]:
-                    filtered_delete.append(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        filtered_delete.append(path)
+                    elif first_part in user_company_ids:
+                        filtered_delete.append(path)
             to_delete = filtered_delete
             
             has_changes = len(to_index) > 0 or len(to_delete) > 0
@@ -929,7 +1539,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         rel_to_index = []
         for path in to_index:
             try:
-                rel = Path(path).relative_to(data_path)
+                rel = Path(path).resolve().relative_to(data_path.resolve())
                 rel_to_index.append(str(rel).replace("\\", "/"))
             except ValueError:
                 rel_to_index.append(path)
@@ -949,7 +1559,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         data_path = Path(_config.data_path)
         
-        if user["role"] == "superadmin" or not user["company_id"] or user["company_id"] == "all":
+        user_company_ids = user.get("company_ids", [])
+        is_super = user["role"] == "superadmin" or "all" in user_company_ids
+        if is_super:
             # Суперадмин применяет всё
             to_index = list(_pending_changes["to_index"])
             to_delete = list(_pending_changes["to_delete"])
@@ -957,24 +1569,32 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             _pending_changes["to_delete"].clear()
         else:
             # Ограниченный админ применяет только свои
-            company_id = user["company_id"]
-            
             # Фильтруем to_index (абсолютные пути)
             for path in list(_pending_changes["to_index"]):
                 try:
-                    rel = Path(path).relative_to(data_path)
-                    if rel.parts and rel.parts[0] == company_id:
-                        to_index.append(path)
-                        _pending_changes["to_index"].remove(path)
+                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    if rel.parts:
+                        first_part = rel.parts[0]
+                        if first_part == "common" and "common" in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
+                        elif first_part in user_company_ids:
+                            to_index.append(path)
+                            _pending_changes["to_index"].remove(path)
                 except ValueError:
                     pass
             
             # Фильтруем to_delete (относительные пути)
             for path in list(_pending_changes["to_delete"]):
                 rel = Path(path)
-                if rel.parts and rel.parts[0] == company_id:
-                    to_delete.append(path)
-                    _pending_changes["to_delete"].remove(path)
+                if rel.parts:
+                    first_part = rel.parts[0]
+                    if first_part == "common" and "common" in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
+                    elif first_part in user_company_ids:
+                        to_delete.append(path)
+                        _pending_changes["to_delete"].remove(path)
                     
         if not to_index and not to_delete:
             return {"success": True, "message": "Нет изменений для применения."}
@@ -1155,6 +1775,298 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         except WebSocketDisconnect:
             _ws_clients.discard(websocket)
 
+
+    # ─── Логи Аудита ──────────────────────────────────────────────────────
+
+    @app.get("/api/audit_logs")
+    async def get_audit_logs(limit: int = 100, offset: int = 0, user: Dict = Depends(require_permission("view_audit_logs"))):
+        if not _assistant or not _assistant.chat_history:
+            return JSONResponse({"error": "БД недоступна"}, status_code=503)
+        logs = await _assistant.chat_history.get_admin_audit_logs(limit=limit, offset=offset)
+        return {"logs": logs}
+
+    # ─── Контакты (Телефонный справочник) ─────────────────────────────────
+
+    def set_contacts_sync_pending(state: bool):
+        sync_file = Path(_config.data_path) / "contacts_sync_state.json"
+        sync_file.write_text(json.dumps({"pending": state}), encoding="utf-8")
+
+    def get_contacts_sync_pending() -> bool:
+        sync_file = Path(_config.data_path) / "contacts_sync_state.json"
+        if sync_file.exists():
+            try:
+                data = json.loads(sync_file.read_text(encoding="utf-8"))
+                return data.get("pending", False)
+            except Exception:
+                pass
+        return False
+
+    def get_db_connection():
+        import sqlite3
+        db_path = Path(_config.data_path) / "contacts.db"
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception as e:
+            logger.warning(f"Не удалось установить PRAGMA для SQLite: {e}")
+        return conn
+
+    def backup_database():
+        import sqlite3
+        import datetime
+        try:
+            db_path = Path(_config.data_path) / "contacts.db"
+            if not db_path.exists():
+                return
+                
+            backup_dir = Path(_config.data_path) / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Удаляем старые бэкапы, если их больше лимита
+            existing_backups = sorted(backup_dir.glob("contacts_backup_*.db"))
+            while len(existing_backups) >= BACKUP_RETENTION_COUNT:
+                try:
+                    existing_backups[0].unlink()
+                    existing_backups.pop(0)
+                except Exception as e:
+                    logger.warning(f"Ошибка удаления старого бэкапа: {e}")
+                    break
+
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = backup_dir / f"contacts_backup_{timestamp}.db"
+            
+            # Выполняем резервное копирование через sqlite3 backup API
+            src_conn = sqlite3.connect(db_path, timeout=30.0)
+            dst_conn = sqlite3.connect(backup_path)
+            with dst_conn:
+                src_conn.backup(dst_conn)
+            dst_conn.close()
+            src_conn.close()
+            logger.info(f"Создан бэкап базы данных контактов: {backup_path.name}")
+        except Exception as e:
+            logger.error(f"Не удалось создать бэкап базы данных: {e}")
+
+    @app.get("/api/contacts")
+    async def get_contacts(limit: int = 100, offset: int = 0, search: Optional[str] = None, user: Dict = Depends(require_auth)):
+        db_path = Path(_config.data_path) / "contacts.db"
+        if not db_path.exists():
+            return {"contacts": [], "total": 0}
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM contacts ORDER BY company ASC, department ASC, full_name ASC")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        contacts = [dict(r) for r in rows]
+        
+        if search:
+            s = search.lower()
+            contacts = [c for c in contacts if 
+                        s in (c.get("full_name") or "").lower() or 
+                        s in (c.get("phone") or "").lower() or 
+                        s in (c.get("email") or "").lower() or 
+                        s in (c.get("company") or "").lower() or 
+                        s in (c.get("department") or "").lower()]
+                        
+        total = len(contacts)
+        contacts = contacts[offset : offset + limit]
+        
+        return {"contacts": contacts, "total": total}
+
+    class ContactCreate(BaseModel):
+        company: str
+        department: str
+        full_name: str
+        position: str
+        phone: str
+        email: Optional[str] = ""
+
+    @app.post("/api/contacts")
+    async def create_contact(body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO contacts (company, department, full_name, position, phone, email) VALUES (?, ?, ?, ?, ?, ?)",
+            (body.company, body.department, body.full_name, body.position, body.phone, body.email)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Создание контакта", f"Добавлен: {body.full_name} ({body.phone})")
+            
+        set_contacts_sync_pending(True)
+        return {"success": True, "id": new_id}
+
+    @app.put("/api/contacts/{contact_id}")
+    async def update_contact(contact_id: int, body: ContactCreate, user: Dict = Depends(require_permission("edit_contacts"))):
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Получаем старые данные для лога
+        cursor.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,))
+        old_row = cursor.fetchone()
+        old_dict = dict(old_row) if old_row else {}
+        
+        cursor.execute(
+            "UPDATE contacts SET company=?, department=?, full_name=?, position=?, phone=?, email=? WHERE id=?",
+            (body.company, body.department, body.full_name, body.position, body.phone, body.email, contact_id)
+        )
+        conn.commit()
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            changes = []
+            if old_dict:
+                mapping = {
+                    "full_name": ("ФИО", body.full_name),
+                    "phone": ("телефон", body.phone),
+                    "email": ("email", body.email),
+                    "company": ("предприятие", body.company),
+                    "department": ("отдел", body.department),
+                    "position": ("должность", body.position)
+                }
+                
+                for key, (label, new_val) in mapping.items():
+                    old_val = old_dict.get(key, "")
+                    # Ensure both are strings for comparison and strip
+                    old_str = str(old_val).strip() if old_val is not None else ""
+                    new_str = str(new_val).strip() if new_val is not None else ""
+                    
+                    if old_str != new_str:
+                        changes.append(f"{label} с '{old_str}' на '{new_str}'")
+            
+            change_str = ", ".join(changes) if changes else "без изменений"
+            
+            await _assistant.chat_history.log_admin_action(
+                user["username"], 
+                "Изменение контакта", 
+                f"Изменен {body.full_name}: {change_str}"
+            )
+            
+        set_contacts_sync_pending(True)
+        return {"success": True}
+
+    @app.delete("/api/contacts/{contact_id}")
+    async def delete_contact(contact_id: int, user: Dict = Depends(require_permission("edit_contacts"))):
+        await asyncio.to_thread(backup_database)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT full_name FROM contacts WHERE id = ?", (contact_id,))
+        row = cursor.fetchone()
+        name = row[0] if row else "Unknown"
+        
+        cursor.execute("DELETE FROM contacts WHERE id=?", (contact_id,))
+        conn.commit()
+        conn.close()
+        
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Удаление контакта", f"Удален: {name}")
+            
+        set_contacts_sync_pending(True)
+        return {"success": True}
+
+    @app.get("/api/contacts/sync_status")
+    async def sync_status(user: Dict = Depends(require_auth)):
+        return {"pending": get_contacts_sync_pending()}
+
+    @app.post("/api/contacts/sync_yandex")
+    async def trigger_yandex_sync(user: Dict = Depends(require_permission("edit_contacts"))):
+        await asyncio.to_thread(backup_database)
+        try:
+            import sys
+            import importlib
+            project_root = Path(__file__).parent.parent
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+            import scripts.sync_yandex_emails
+            importlib.reload(scripts.sync_yandex_emails)
+            from scripts.sync_yandex_emails import sync_emails
+            
+            res = await asyncio.to_thread(sync_emails, _config)
+            if not res.get("success"):
+                return {"success": False, "error": res.get("error", "Неизвестная ошибка")}
+                
+            updated_count = res.get("updated_count", 0)
+            total_yandex = res.get("total_yandex", 0)
+            
+            if _assistant and _assistant.chat_history:
+                await _assistant.chat_history.log_admin_action(
+                    user["username"], 
+                    "Синхронизация почт Яндекс 360", 
+                    f"Импортировано почт: {updated_count} из {total_yandex} аккаунтов"
+                )
+                
+            if updated_count > 0:
+                set_contacts_sync_pending(True)
+                
+            return {
+                "success": True, 
+                "updated_count": updated_count, 
+                "total_yandex": total_yandex
+            }
+        except Exception as e:
+            logger.exception("Исключение в эндпоинте /api/contacts/sync_yandex")
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/contacts/sync")
+    async def trigger_sync(user: Dict = Depends(require_auth)):
+        if user["role"] != "superadmin":
+            raise HTTPException(status_code=403, detail="Только супер-администратор может запускать ручную синхронизацию")
+            
+        if _assistant and _assistant.chat_history:
+            await _assistant.chat_history.log_admin_action(user["username"], "Ручная синхронизация", "Запущена ручная пересборка контактов")
+            
+        async def run_sync():
+            try:
+                import sys
+                from pathlib import Path
+                project_root = Path(__file__).parent.parent
+                if str(project_root) not in sys.path:
+                    sys.path.insert(0, str(project_root))
+                from scripts.migrate_contacts_to_qdrant import migrate
+                await migrate(config=_config, force=True)
+                set_contacts_sync_pending(False)
+                if _assistant and _assistant.chat_history:
+                    await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Синхронизация контактов успешно завершена")
+            except Exception as e:
+                logger.error(f"Sync error: {e}")
+                
+        asyncio.create_task(run_sync())
+        return {"success": True, "message": "Синхронизация запущена в фоне"}
+
+    async def _nightly_sync_task():
+        import datetime
+        while True:
+            try:
+                now = datetime.datetime.now()
+                if now.hour == 3 and now.minute == 0:
+                    if get_contacts_sync_pending():
+                        logger.info("Starting automatic nightly sync for contacts...")
+                        from scripts.migrate_contacts_to_qdrant import migrate
+                        await migrate(config=_config, force=True)
+                        set_contacts_sync_pending(False)
+                        if _assistant and _assistant.chat_history:
+                            await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Автоматическая ночная синхронизация успешно завершена")
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Nightly sync task error: {e}")
+                await asyncio.sleep(60)
+
+    @app.on_event("startup")
+    async def startup_event():
+        asyncio.create_task(_nightly_sync_task())
+
     # ─── Вспомогательные функции ─────────────────────────────────────────
 
     _admin_app = app
@@ -1272,7 +2184,8 @@ async def _ai_convert_to_markdown(raw_text: str, title: str, company_id: Optiona
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=contents,
         )
@@ -1304,7 +2217,7 @@ async def _reindex_document(file_path: str):
 
         if chunks:
             embedder = EmbeddingService(_config)
-            rel_path = str(file.relative_to(Path(_config.data_path))).replace("\\", "/")
+            rel_path = str(file.resolve().relative_to(Path(_config.data_path).resolve())).replace("\\", "/")
             await embedder.incremental_update(chunks, target_sources=[rel_path])
             logger.info(f"Reindexed {len(chunks)} chunks from {file_path}")
         else:
@@ -1391,7 +2304,8 @@ async def _update_index_file_with_ai(new_doc_path: str, company_id: Optional[str
         from src.core.clients import ClientManager
         client_manager = ClientManager.get_instance(_config)
         model_client = client_manager.get_gemini_client()
-        response = model_client.models.generate_content(
+        response = await asyncio.to_thread(
+            model_client.models.generate_content,
             model=_config.text_model,
             contents=prompt,
         )

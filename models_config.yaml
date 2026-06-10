@@ -2,7 +2,7 @@
 # Базовые настройки берутся отсюда, можно переопределить через .env
 
 text_model:
-  name: "gemini-3.5-flash"  # Переопределить через GEMINI_TEXT_MODEL в .env
+  name: "gemini-3.1-flash-lite"  # Переопределить через GEMINI_TEXT_MODEL в .env
   api_version: "v1beta"
   generation:
     temperature: 0.3
@@ -14,9 +14,13 @@ text_model:
     disabled: true
   fallbacks:
     # Tier-1: пробуем первой при недоступности основной (gemini-3.1-flash-lite)
-    - "gemini-3.1-flash-lite"
+    - "gemini-3.5-flash"
     # Tier-2: только если Tier-1 тоже недоступна
-    - "gemini-2.5-flash-lite"
+    - "gemini-2.5-flash"
+    # Tier-3: только если Tier-2 тоже недоступна
+    - "gemini-3.1-flash"
+    # Tier-4: только если Tier-3 тоже недоступна
+    - "gemma-4-26b-a4b-it"
   prompt:
     template: |
       Ты — корпоративный AI-ассистент холдинговой компании ТЭМПО.
@@ -147,7 +151,7 @@ audio_model:
     - "gemini-3.1-flash-lite"
 
 embedding_model:
-  name: "gemini-embedding-2"  # Переопределить через GEMINI_EMBEDDING_MODEL в .env
+  name: "gemini-embedding-2-preview"  # Переопределить через GEMINI_EMBEDDING_MODEL в .env
   api_version: "v1beta"
 
 contextual_retrieval:
@@ -207,6 +211,9 @@ memory:
   summarization_threshold: 50
   max_context_tokens: 8000
   enable_auto_summarization: true
+  messages_summarize_threshold: 20
+  messages_keep_recent: 10
+  max_chars_per_history_message: 2000
 
 # ============================================
 # ОБЩИЕ НАСТРОЙКИ ПРИЛОЖЕНИЯ

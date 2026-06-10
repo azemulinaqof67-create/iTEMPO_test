@@ -1,17 +1,26 @@
 ---
-title: 'АО СКС "ТЭМПО"'
-description: 'Главная страница раздела АО СКС "ТЭМПО"'
-tags: ["предприятие", "навигация"]
+organization: "sks"
+category: "general"
+title: "АО СКС 'ТЭМПО'"
+description: "Навигационный индекс документов организации АО СКС 'ТЭМПО'"
+tags: ["индекс", "навигация", "sks"]
 questions_answered:
-  - "Какая информация доступна по "
-department: "General"
-company: 'АО СКС "ТЭМПО"'
-last_updated: "2026-04-20"
+  - "Какие разделы доступны для АО СКС 'ТЭМПО'?"
+last_updated: "2026-06-02"
+source_file: "sks/index.md"
 ---
 
-# АО СКС "ТЭМПО"
+# Документы: АО СКС 'ТЭМПО'
 
-Добро пожаловать в раздел АО СКС "ТЭМПО". Здесь собрана информация, специфичная для вашего предприятия.
+Доступные разделы базы знаний:
 
-### Доступные материалы
-- **[[Расположение на территории|location/in_tempo]]**: Координаты цехов, складов и объектов на территории.
+- [[Кадры и мотивация (hr)|hr/index]]
+- [[Внутренний распорядок и регламенты (routine)|routine/index]]
+- [[Транспорт и логистика (logistics)|logistics/index]]
+- [[Расположение и навигация (locations)|locations/index]]
+- [[ИТ и рабочее место (it_support)|it_support/index]]
+- [[Инфраструктура (infrastructure)|infrastructure/index]]
+- [[Helpdesk (helpdesk)|helpdesk/index]]
+- [[Социальная сфера и Профсоюз (social)|social/index]]
+- [[Корпоративный календарь (calendar)|calendar/index]]
+- [[О компании (company)|company/index]]

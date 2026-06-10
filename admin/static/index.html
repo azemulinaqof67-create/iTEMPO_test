@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
     <!-- Login Screen -->
@@ -76,6 +76,14 @@
                 <a href="#" class="nav-item hidden" id="navItemAdmins" onclick="showPage('admins', this)">
                     <span class="nav-icon">🛡️</span>
                     <span>Администраторы</span>
+                </a>
+                <a href="#" class="nav-item" onclick="showPage('contacts', this)">
+                    <span class="nav-icon">📞</span>
+                    <span>Справочник</span>
+                </a>
+                <a href="#" class="nav-item hidden" id="navItemAudit" onclick="showPage('audit', this)">
+                    <span class="nav-icon">📝</span>
+                    <span>Логи действий</span>
                 </a>
             </nav>
 
@@ -185,8 +193,7 @@
                         <table class="data-table" id="usersTable">
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Платформа</th>
+                                                                        <th>Платформа</th>
                                     <th>Предприятие</th>
                                     <th>Последняя активность</th>
                                     <th>Статус</th>
@@ -194,7 +201,7 @@
                                 </tr>
                             </thead>
                             <tbody id="usersBody">
-                                <tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>
+                                <tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -232,11 +239,88 @@
                                 </tr>
                             </thead>
                             <tbody id="logsBody">
-                                <tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>
+                                <tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
                     <div class="pagination" id="logsPagination"></div>
+                </div>
+            </div>
+
+
+            <!-- Contacts -->
+            <div id="pageContacts" class="page hidden">
+                <div class="page-header" style="flex-wrap: wrap; gap: 15px;">
+                    <h1 id="contactsPageTitle">Телефонный справочник ГК ТЭМПО</h1>
+                    
+                    <div style="flex: 1; min-width: 300px; display: flex; justify-content: center; align-items: center;">
+                        <input type="text" class="search-input" style="width: 100%; max-width: 600px; padding: 12px 20px; font-size: 1.1em; border-radius: 25px;" placeholder="Введите имя, должность, номер или email..." id="contactSearch" oninput="filterContacts()">
+                    </div>
+
+                    <div class="header-actions">
+                        <select id="contactsPageSizeSelect" class="search-input" style="width: auto; padding: 8px 12px; border-radius: 8px;" onchange="changeContactsPageSize()">
+                            <option value="50">50 записей</option>
+                            <option value="100">100 записей</option>
+                            <option value="200">200 записей</option>
+                            <option value="300">300 записей</option>
+                            <option value="500">500 записей</option>
+                        </select>
+                        <button id="btnSyncContacts" class="btn btn-success hidden" onclick="syncContactsNow()">⚡ Синхронизировать</button>
+                        <button id="btnSyncYandex" class="btn btn-secondary" onclick="syncYandexEmails()">📥 Импорт</button>
+                        <button id="btnAddContact" class="btn btn-primary" onclick="showContactModal()">+ Добавить</button>
+                        <button id="btnRefreshContacts" class="btn btn-ghost" style="display: none;" onclick="loadContacts()">🔄 Обновить</button>
+                    </div>
+                </div>
+
+                <div class="card glass">
+                    <div class="table-wrapper">
+                        <table class="data-table" id="contactsTable">
+                            <thead>
+                                <tr>
+                                                                        <th>ФИО</th>
+                                    <th>Должность</th>
+                                    <th>Отдел</th>
+                                    <th>Предприятие</th>
+                                    <th>Телефон</th>
+                                    <th>Email</th>
+                                    <th id="thContactActions">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contactsBody">
+                                <tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="contactsPagination"></div>
+                </div>
+            </div>
+
+            <!-- Audit Logs -->
+            <div id="pageAudit" class="page hidden">
+                <div class="page-header">
+                    <h1>Логи действий администраторов</h1>
+                    <div class="header-actions">
+                        <button class="btn btn-ghost" onclick="loadAuditLogs()">🔄 Обновить</button>
+                    </div>
+                </div>
+
+                <div class="card glass">
+                    <div class="table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Время</th>
+                                    <th>Администратор</th>
+                                    <th>Действие</th>
+                                    <th>Детали</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auditBody">
+                                <tr><td colspan="4" class="loading-cell">Загрузка...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="auditPagination"></div>
                 </div>
             </div>
 
@@ -246,29 +330,61 @@
                     <h1>База знаний</h1>
                     <div class="header-actions">
                         <button id="btnApplyChanges" class="btn btn-success" disabled onclick="applyPendingChanges()">⚡ Применить изменения</button>
+                        <button class="btn btn-secondary" onclick="showTrashModal()">🗑 Корзина</button>
+                        <button id="btnCreateFolder" class="btn btn-secondary" onclick="showCreateFolderModal()">📁 Создать папку</button>
                         <button class="btn btn-primary" onclick="showDocUpload()">+ Добавить документ</button>
                     </div>
                 </div>
+                <div id="explorerBreadcrumbs" class="breadcrumbs-container" style="margin-bottom: 16px; font-size: 14px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);"></div>
 
                 <!-- Upload Panel (hidden by default) -->
                 <div id="docUploadPanel" class="card glass hidden">
                     <div class="card-header">
-                        <h3>Добавить документ</h3>
+                        <h3>Добавить документ (Human-in-the-loop)</h3>
                         <button class="btn btn-ghost btn-sm" onclick="hideDocUpload()">✕</button>
                     </div>
                     <div class="upload-form">
                         <div class="form-row">
+                            <div class="form-group">
+                                <label>Организация</label>
+                                <select class="select-input" id="uploadOrganization">
+                                    <option value="shared">📁 Все предприятия (Общее)</option>
+                                    <option value="technotron">ООО "Технотрон"</option>
+                                    <option value="kmk">Камский металлургический комбинат (КМК)</option>
+                                    <option value="it_department">ИТ-Дирекция</option>
+                                    <option value="zteo">АО ПТФК "ЗТЭО"</option>
+                                    <option value="ntz">АО НТЗ "ТЭМ-ПО"</option>
+                                    <option value="kzmk">АО КЗМК "ТЭМПО"</option>
+                                    <option value="metiz">ООО Технотрон-Метиз</option>
+                                    <option value="port">ООО ТЭМПО-ПОРТ</option>
+                                    <option value="sks">АО СКС "ТЭМПО"</option>
+                                    <option value="td">АО ТД "ТЭМПО"</option>
+                                    <option value="itz">АО ИТЗ</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Категория</label>
+                                <select class="select-input" id="uploadCategory">
+                                    <option value="hr">Кадры (hr)</option>
+                                    <option value="routine">Регламенты (routine)</option>
+                                    <option value="logistics">Логистика (logistics)</option>
+                                    <option value="locations">Расположение (locations)</option>
+                                    <option value="it_support">ИТ-поддержка (it_support)</option>
+                                    <option value="infrastructure">Инфраструктура (infrastructure)</option>
+                                    <option value="helpdesk">Helpdesk (helpdesk)</option>
+                                    <option value="social">Социальная сфера (social)</option>
+                                    <option value="calendar">Календарь (calendar)</option>
+                                    <option value="company">Компания (company)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
                             <div class="form-group" style="grid-column: span 2;">
-                                <label>Название документа</label>
-                                <input type="text" class="text-input" id="docTitle" placeholder="Например: Дресс-код 2024">
+                                <label>Черновое название документа (на русском)</label>
+                                <input type="text" class="text-input" id="docTitleDraft" placeholder="Например: График отпусков завода на 2026 год">
                             </div>
                         </div>
-                        <div class="form-group">
-                            <label>Организации для публикации</label>
-                            <div id="docCompaniesContainer" class="permissions-grid">
-                                <!-- Генерируется динамически через JS -->
-                            </div>
-                        </div>
+
                         <div class="tabs">
                             <button class="tab active" onclick="switchDocTab('file', this)">📎 Загрузить файл</button>
                             <button class="tab" onclick="switchDocTab('text', this)">✏️ Ввести текст</button>
@@ -277,8 +393,8 @@
                             <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="event.preventDefault()">
                                 <div class="drop-icon">📄</div>
                                 <p>Перетащите файл сюда или <label for="fileInput" class="link">выберите</label></p>
-                                <p class="hint">Поддерживается: PDF, DOCX, TXT, MD</p>
-                                <input type="file" id="fileInput" class="hidden" accept=".pdf,.docx,.txt,.md" onchange="fileSelected()">
+                                <p class="hint">Поддерживается только: .MD, .TXT</p>
+                                <input type="file" id="fileInput" class="hidden" accept=".txt,.md" onchange="fileSelected()">
                             </div>
                             <div id="selectedFile" class="selected-file hidden"></div>
                         </div>
@@ -286,22 +402,41 @@
                             <textarea class="textarea-input" id="docTextContent" rows="8" placeholder="Вставьте или введите текст документа..."></textarea>
                         </div>
                         <div class="upload-actions">
-                            <button class="btn btn-secondary" onclick="previewDocument()" id="previewBtn">🔍 Обработать через ИИ</button>
-                            <span class="hint">ИИ конвертирует документ в нужный формат</span>
+                            <button type="button" class="btn btn-secondary" onclick="processDocThroughAI()" id="aiProcessBtn">🤖 Обработать через ИИ</button>
+                            <span class="hint">ИИ сгенерирует название, описание, теги и вопросы перед сохранением</span>
                         </div>
                     </div>
 
-                    <!-- Preview Section -->
-                    <div id="docPreviewSection" class="hidden">
-                        <div class="preview-header">
-                            <h4>Предпросмотр (можно редактировать)</h4>
-                            <div class="preview-actions">
-                                <input type="text" class="text-input" id="docFilename" placeholder="Имя файла">
-                                <button class="btn btn-primary" onclick="saveDocument()">💾 Сохранить в базу</button>
+                    <!-- AI Result Section (hidden by default) -->
+                    <div id="docAiResultSection" class="hidden" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
+                        <h4 style="margin-bottom: 15px; color: var(--accent);">🤖 Результат обработки ИИ (разметка для RAG)</h4>
+                        <div class="form-vertical">
+                            <div class="form-group">
+                                <label>Сгенерированный заголовок (Title)</label>
+                                <input type="text" class="text-input" id="aiTitle" placeholder="Официальный заголовок документа...">
+                            </div>
+                            <div class="form-group">
+                                <label>Описание для RAG (Description)</label>
+                                <input type="text" class="text-input" id="aiDescription" placeholder="Краткое описание документа...">
+                            </div>
+                            <div class="form-group">
+                                <label>Имя файла (File Name, snake_case.md)</label>
+                                <input type="text" class="text-input" id="aiFilename" placeholder="vacation_schedule.md">
+                            </div>
+                            <div class="form-group">
+                                <label>Теги (Tags, через запятую)</label>
+                                <input type="text" class="text-input" id="aiTags" placeholder="тег1, тег2, тег3...">
+                            </div>
+                            <div class="form-group">
+                                <label>Связанные вопросы (Questions, каждый вопрос с новой строки)</label>
+                                <textarea class="textarea-input" id="aiQuestions" rows="3" placeholder="Вопрос 1?&#10;Вопрос 2?"></textarea>
+                            </div>
+                            <input type="hidden" id="aiLastUpdated" value="">
+                            <div class="upload-actions" style="margin-top: 15px;">
+                                <button type="button" class="btn btn-primary" onclick="finalUploadDocument()">💾 Сохранить и опубликовать</button>
+                                <span id="uploadResultMsg" class="hidden"></span>
                             </div>
                         </div>
-                        <textarea class="textarea-input textarea-preview" id="docPreview" rows="20"></textarea>
-                        <div id="saveResult" class="hidden"></div>
                     </div>
                 </div>
 
@@ -410,8 +545,7 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Имя пользователя</th>
+                                                                        <th>Имя пользователя</th>
                                     <th>Роль</th>
                                     <th>Организация</th>
                                     <th>Права</th>
@@ -419,7 +553,7 @@
                                 </tr>
                             </thead>
                             <tbody id="adminsBody">
-                                <tr><td colspan="6" class="loading-cell">Загрузка...</td></tr>
+                                <tr><td colspan="7" class="loading-cell">Загрузка...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -443,6 +577,6 @@
     <!-- Toast notifications -->
     <div id="toastContainer"></div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

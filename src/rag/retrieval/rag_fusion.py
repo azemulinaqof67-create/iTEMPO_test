@@ -3,7 +3,7 @@ RAG Fusion: Multi-query retrieval с RRF.
 """
 
 import asyncio
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.core.config import Config
 from src.core.prompt_manager import PromptManager
@@ -20,13 +20,31 @@ class RAGFusion:
         self.prompt_manager = prompt_manager
         self.llm = TextLLMService(config)
 
-    async def search_with_fusion(self, query: str, limit: int = 10, company_id: Optional[str] = None) -> List[Dict]:
-        """Multi-query search с RRF fusion."""
+    async def search_with_fusion(
+        self,
+        query: str,
+        limit: int = 10,
+        company_id: Optional[str] = None,
+        qdrant_filter: Optional[Any] = None,
+    ) -> List[Dict]:
+        """Multi-query search с RRF fusion.
+
+        qdrant_filter передаётся в каждый вариант запроса, чтобы гарантировать,
+        что ни один из дополнительных вариантов запроса не обходит фильтр компании.
+        """
         variations = await self._expand_query(query)
         all_queries = [query] + variations
 
-        # Выполняем все поисковые запросы параллельно
-        tasks = [self.search.search(q, limit=self.config.fusion_fetch_limit, company_id=company_id) for q in all_queries]
+        # Выполняем все поисковые запросы параллельно, с одним фильтром для всех
+        tasks = [
+            self.search.search(
+                q,
+                limit=self.config.fusion_fetch_limit,
+                company_id=company_id,
+                qdrant_filter=qdrant_filter,
+            )
+            for q in all_queries
+        ]
         all_results = await asyncio.gather(*tasks)
 
         all_rankings: List[Dict[str, int]] = []
