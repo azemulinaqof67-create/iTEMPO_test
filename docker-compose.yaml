@@ -47,5 +47,15 @@ services:
       - ./qdrant_storage_v2:/app/qdrant_storage_v2
       - ./logs:/app/logs
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: tempo-tunnel
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - app
+
 volumes:
   postgres_data:

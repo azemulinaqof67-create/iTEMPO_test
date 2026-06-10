@@ -49,6 +49,69 @@
 
 ---
 
+## Настройка на сервере Ubuntu Linux (Через Apache2 + GSSAPI)
+
+Если вы разворачиваете проект на Ubuntu/Debian, самым надежным и простым способом включить прозрачную авторизацию (Kerberos/SSO) является использование веб-сервера **Apache2** в качестве обратного прокси с модулем `mod_auth_gssapi`.
+
+### Шаг 1. Подготовка Keytab-файла на контроллере домена (Windows Server)
+На контроллере домена (DC) с помощью утилиты `ktpass` нужно создать пользователя и сгенерировать keytab-файл для вашего Linux-сервера. 
+Пример команды на контроллере домена:
+```cmd
+ktpass -princ HTTP/tempo-spravochnik.domain.loc@DOMAIN.LOC -mapuser web_sso_user -pass YourStrongPassword -crypto All -ptype KRB5_NT_PRINCIPAL -out http.keytab
+```
+Перенесите полученный файл `http.keytab` на сервер Ubuntu (например, в `/etc/apache2/http.keytab`) и дайте права веб-серверу:
+```bash
+sudo chown www-data:www-data /etc/apache2/http.keytab
+sudo chmod 600 /etc/apache2/http.keytab
+```
+
+### Шаг 2. Установка пакетов на Ubuntu
+```bash
+sudo apt update
+sudo apt install apache2 libapache2-mod-auth-gssapi krb5-user
+```
+*(При установке `krb5-user` введите имя вашего домена большими буквами, например: `DOMAIN.LOC`)*
+
+### Шаг 3. Включение модулей проксирования
+```bash
+sudo a2enmod proxy proxy_http auth_gssapi headers rewrite
+```
+
+### Шаг 4. Настройка виртуального хоста (Virtual Host)
+Создайте или отредактируйте конфигурационный файл сайта (например, `/etc/apache2/sites-available/itempo.conf`):
+
+```apache
+<VirtualHost *:80>
+    ServerName tempo-spravochnik.domain.loc
+
+    # Настройки Kerberos SSO
+    <Location />
+        AuthType GSSAPI
+        AuthName "iTEMPO Directory SSO"
+        GssapiCredStore keytab:/etc/apache2/http.keytab
+        # Разрешить Kerberos (Negotiate)
+        Require valid-user
+        
+        # Захватываем имя пользователя из Kerberos и кладем в HTTP-заголовок
+        RequestHeader set X-Remote-User expr=%{REMOTE_USER}
+        
+        # Проксируем запросы в Python (FastAPI)
+        ProxyPass http://127.0.0.1:8000/
+        ProxyPassReverse http://127.0.0.1:8000/
+    </Location>
+</VirtualHost>
+```
+
+### Шаг 5. Применение настроек
+```bash
+sudo a2ensite itempo.conf
+sudo systemctl restart apache2
+```
+
+Теперь пользователи с рабочих компьютеров Windows при переходе на `http://tempo-spravochnik.domain.loc` будут прозрачно авторизоваться через Apache, а FastAPI получит заголовок `X-Remote-User: ivanov@DOMAIN.LOC` (или `DOMAIN\ivanov`) и автоматически впустит в систему.
+
+---
+
 ## Итог
 
 Со стороны кода веб-админки всё уже готово. Как только системный администратор настроит IIS по инструкции выше, пользователи смогут заходить по ссылке в браузере и мгновенно попадать в телефонный справочник без ввода пароля.

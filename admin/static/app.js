@@ -1974,7 +1974,7 @@ function toggleAdminRoleFields() {
   const companyGroup = document.getElementById('adminCompanyGroup');
   const permsGroup = document.getElementById('adminPermissionsGroup');
   
-  if (role === 'superadmin') {
+  if (role === 'superadmin' || role === 'viewer') {
     if (companyGroup) companyGroup.style.display = 'none';
     if (permsGroup) permsGroup.style.display = 'none';
   } else {
@@ -2000,7 +2000,13 @@ async function saveAdmin(e, adminId = null) {
   let company_id = ['all'];
   let permissions = [];
   
-  if (role !== 'superadmin') {
+  if (role === 'superadmin') {
+    permissions = Object.keys(PERMISSION_NAMES);
+    company_id = ['all'];
+  } else if (role === 'viewer') {
+    permissions = [];
+    company_id = ['all'];
+  } else {
     const checkedCompanies = document.querySelectorAll('input[name="adminCompanies"]:checked');
     const companyIds = Array.from(checkedCompanies).map(cb => cb.value);
     
@@ -2015,8 +2021,6 @@ async function saveAdmin(e, adminId = null) {
     
     const checkedBoxes = document.querySelectorAll('input[name="permissions"]:checked');
     permissions = Array.from(checkedBoxes).map(cb => cb.value);
-  } else {
-    permissions = Object.keys(PERMISSION_NAMES);
   }
   
   const payload = {
