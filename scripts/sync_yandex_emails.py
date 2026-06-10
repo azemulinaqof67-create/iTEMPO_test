@@ -26,7 +26,7 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
     
     while True:
         url = f"{base_url}/directory/v1/org/{org_id}/users"
-        params = {"page": page, "per_page": per_page}
+        params = {"page": page, "perPage": per_page}
         headers = {
             "Authorization": f"OAuth {token}",
             "Accept": "application/json"
@@ -60,6 +60,17 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
 def build_yandex_name_map(yandex_users: List[Dict[str, Any]]) -> Dict[str, str]:
     """Строит маппинг ФИО -> Email из пользователей Яндекс 360."""
     name_map = {}
+    
+    def add_email(name_key: str, new_email: str):
+        if not name_key or not new_email:
+            return
+        new_email = new_email.strip().lower()
+        if name_key in name_map:
+            if new_email not in name_map[name_key]:
+                name_map[name_key].append(new_email)
+        else:
+            name_map[name_key] = [new_email]
+
     for u in yandex_users:
         email = u.get("email")
         if not email:
@@ -68,7 +79,7 @@ def build_yandex_name_map(yandex_users: List[Dict[str, Any]]) -> Dict[str, str]:
         # 1. Сопоставление по displayName
         display_name = u.get("displayName")
         if display_name:
-            name_map[normalize_name(display_name)] = email
+            add_email(normalize_name(display_name), email)
             
         # 2. Сопоставление по составным ФИО (Фамилия + Имя + Отчество)
         name_info = u.get("name") or {}
@@ -78,10 +89,16 @@ def build_yandex_name_map(yandex_users: List[Dict[str, Any]]) -> Dict[str, str]:
         
         if last and first:
             if middle:
-                name_map[normalize_name(f"{last} {first} {middle}")] = email
-            name_map[normalize_name(f"{last} {first}")] = email
+                add_email(normalize_name(f"{last} {first} {middle}"), email)
+            add_email(normalize_name(f"{last} {first}"), email)
             
-    return name_map
+    # Склеиваем массивы почт в строку через запятую с сортировкой,
+    # чтобы порядок всегда был детерминированным (стабильным)
+    result_map = {}
+    for k, v in name_map.items():
+        result_map[k] = ", ".join(sorted(v))
+        
+    return result_map
 
 def sync_emails(config=None) -> Dict[str, Any]:
     """Основная функция синхронизации почт. Возвращает статистику."""
@@ -96,13 +113,15 @@ def sync_emails(config=None) -> Dict[str, Any]:
     token = config.yandex_360_token
     org_id_raw = config.yandex_360_org_id
     
-    # Распарсим org_id, который может быть многострочным с комментариями после #
+    # Парсинг org_id, поддержка как новых строк, так и запятых
     org_ids = []
     if org_id_raw:
-        for line in str(org_id_raw).split('\n'):
-            line_clean = line.split('#')[0].strip()
-            if line_clean:
-                org_ids.append(line_clean)
+        # Заменяем запятые на переносы строк для единообразной обработки
+        normalized_raw = str(org_id_raw).replace(',', '\n')
+        for line in normalized_raw.split('\n'):
+            line = line.split('#')[0].strip()
+            if line:
+                org_ids.append(line)
     
     if not token or not org_ids:
         return {
@@ -151,9 +170,12 @@ def sync_emails(config=None) -> Dict[str, Any]:
             normalized = normalize_name(full_name)
             y_email = yandex_map.get(normalized)
             
+            # Нормализуем текущие email-ы (сортируем через запятую) для сравнения
+            curr_emails_sorted = ", ".join(sorted([e.strip().lower() for e in curr_email.split(",") if e.strip()]))
+            
             # Обновляем, если почта в Яндексе есть и она отличается от текущей в БД
-            if y_email and y_email.strip().lower() != curr_email.strip().lower():
-                updates.append((y_email.strip().lower(), c["id"]))
+            if y_email and y_email != curr_emails_sorted:
+                updates.append((y_email, c["id"]))
                 
         # 4. Сохранение изменений в БД
         if updates:

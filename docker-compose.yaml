@@ -51,7 +51,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: tempo-tunnel
     restart: always
-    command: tunnel --url http://app:8000
+    command: tunnel --metrics 0.0.0.0:4567 --url http://app:8000
     depends_on:
       - app
 

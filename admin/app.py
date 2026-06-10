@@ -204,6 +204,15 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             return HTMLResponse(html_path.read_text(encoding="utf-8"))
         return HTMLResponse("<h1>Admin Panel Loading...</h1>")
 
+    @app.get("/phonebook", response_class=HTMLResponse)
+    async def phonebook(request: Request):
+        """Публичный телефонный справочник."""
+        static_dir = Path(__file__).parent / "static"
+        html_path = static_dir / "phonebook.html"
+        if html_path.exists():
+            return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        return HTMLResponse("<h1>Phonebook Loading...</h1>")
+
     @app.post("/api/auth/login")
     async def login(request: Request):
         """Авторизация — возвращает токен сессии."""
@@ -1849,7 +1858,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             logger.error(f"Не удалось создать бэкап базы данных: {e}")
 
     @app.get("/api/contacts")
-    async def get_contacts(limit: int = 100, offset: int = 0, search: Optional[str] = None, user: Dict = Depends(require_auth)):
+    async def get_contacts(limit: int = 100, offset: int = 0, search: Optional[str] = None):
         db_path = Path(_config.data_path) / "contacts.db"
         if not db_path.exists():
             return {"contacts": [], "total": 0}

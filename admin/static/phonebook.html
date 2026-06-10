@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Телефонный справочник ТЭМПО</title>
+    <meta name="description" content="Корпоративный телефонный справочник">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-blue: #0056b3; /* Корпоративный синий (как на сайте) */
+            --dark-blue: #11365e; /* Темно-синий для шапки */
+            --light-blue: #e8f0fe; /* Светло-синий для фона акцентов */
+            --text-dark: #1e293b;
+            --text-muted: #475569;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --border-color: #e2e8f0;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: var(--bg-page);
+            font-family: 'Inter', sans-serif;
+            color: var(--text-dark);
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header-box {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        @media (min-width: 768px) {
+            .header-box {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+        }
+        .header-box h1 {
+            font-size: 28px;
+            color: var(--dark-blue);
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .search-container {
+            position: relative;
+            width: 100%;
+            max-width: 450px;
+        }
+        .search-container input {
+            width: 100%;
+            padding: 14px 20px 14px 44px;
+            border-radius: 12px;
+            border: 2px solid var(--border-color);
+            background: var(--bg-card);
+            outline: none;
+            font-family: inherit;
+            font-size: 15px;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .search-container input:focus {
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 4px rgba(0, 86, 179, 0.1);
+        }
+        .search-icon {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--primary-blue);
+            font-size: 16px;
+        }
+        .data-table-wrapper {
+            background: var(--bg-card);
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+            overflow-x: auto;
+            width: 100%;
+            border: 1px solid var(--border-color);
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 800px;
+        }
+        .data-table th, .data-table td {
+            padding: 18px 24px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .data-table th {
+            background: var(--bg-card);
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 0.05em;
+            border-bottom: 2px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .data-table tbody tr {
+            transition: background-color 0.15s ease;
+        }
+        .data-table tbody tr:hover {
+            background-color: var(--light-blue);
+        }
+        .data-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: var(--text-muted);
+            font-size: 15px;
+        }
+        .company-badge {
+            background: var(--light-blue);
+            color: var(--primary-blue);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .phone-text {
+            font-weight: 600;
+            color: var(--dark-blue);
+            font-size: 15px;
+        }
+        .name-text {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 15px;
+        }
+        .email-link {
+            color: var(--primary-blue);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .email-link:hover {
+            color: var(--dark-blue);
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-box">
+            <h1>Телефонный справочник ТЭМПО</h1>
+            <div class="search-container">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchInput" placeholder="Поиск сотрудника, телефона или отдела..." oninput="debounceSearch()">
+            </div>
+        </div>
+
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ФИО</th>
+                        <th>Должность</th>
+                        <th>Организация</th>
+                        <th>Отдел</th>
+                        <th>Телефон</th>
+                        <th>Email</th>
+                    </tr>
+                </thead>
+                <tbody id="contactsTableBody">
+                    <tr>
+                        <td colspan="6" class="loading">Загрузка контактов...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let searchTimeout = null;
+
+        async function fetchContacts(searchQuery = '') {
+            const tbody = document.getElementById('contactsTableBody');
+            try {
+                const url = searchQuery ? `/api/contacts?limit=500&search=${encodeURIComponent(searchQuery)}` : `/api/contacts?limit=500`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Ошибка сети");
+                const data = await response.json();
+                
+                tbody.innerHTML = '';
+                
+                if (data.contacts.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" class="loading">Ничего не найдено</td></tr>`;
+                    return;
+                }
+
+                data.contacts.forEach(contact => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="name-text">${escapeHTML(contact.full_name || '')}</td>
+                        <td style="color: var(--text-muted);">${escapeHTML(contact.position || '')}</td>
+                        <td>
+                            <span class="company-badge">
+                                ${escapeHTML(contact.company || '—')}
+                            </span>
+                        </td>
+                        <td style="color: var(--text-muted);">${escapeHTML(contact.department || '')}</td>
+                        <td class="phone-text">${escapeHTML(contact.phone || '')}</td>
+                        <td>${contact.email ? `<a href="mailto:${escapeHTML(contact.email)}" class="email-link">${escapeHTML(contact.email)}</a>` : '<span style="color: #94a3b8;">—</span>'}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="6" class="loading" style="color: #ef4444;">Ошибка загрузки данных. Пожалуйста, обновите страницу.</td></tr>`;
+                console.error(err);
+            }
+        }
+
+        function debounceSearch() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const query = document.getElementById('searchInput').value;
+                fetchContacts(query);
+            }, 300);
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag])
+            );
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            fetchContacts();
+        });
+    </script>
+</body>
+</html>

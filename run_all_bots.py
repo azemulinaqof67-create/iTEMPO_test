@@ -124,10 +124,14 @@ async def _run_all(config: Config):
             
             # Запускаем uvicorn в отдельном потоке, чтобы он не конфликтовал с loop
             def run_uvicorn():
+                import sys
+                import asyncio
+                if sys.platform == "win32":
+                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
                 import uvicorn
                 # uvicorn.run сам создаст правильный event loop для своего потока
                 api_host = os.getenv("API_HOST", "0.0.0.0")
-                uvicorn.run(app, host=api_host, port=8000, log_level="info")
+                uvicorn.run(app, host=api_host, port=8000, log_level="info", loop="asyncio")
 
             api_thread = threading.Thread(target=run_uvicorn, daemon=True)
             api_thread.start()
@@ -149,13 +153,18 @@ async def _run_all(config: Config):
         )
         
         def run_admin_server():
+            import sys
+            import asyncio
+            if sys.platform == "win32":
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             import uvicorn
             admin_host = os.getenv("ADMIN_HOST", "0.0.0.0")
             uvicorn.run(
                 admin_app,
                 host=admin_host,
                 port=config.admin_port,
-                log_level="warning"
+                log_level="warning",
+                loop="asyncio"
             )
         
         admin_thread = threading.Thread(target=run_admin_server, daemon=True)
