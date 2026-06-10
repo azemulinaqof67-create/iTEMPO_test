@@ -32,13 +32,27 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
             "Accept": "application/json"
         }
         
-        response = requests.get(url, headers=headers, params=params, timeout=30.0)
+        import time
+        max_retries = 5
+        retry_delay = 2
         
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Ошибка запроса к Яндекс 360 API (HTTP {response.status_code}) для организации {org_id}: {response.text}"
-            )
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers, params=params, timeout=30.0)
             
+            if response.status_code == 429:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Яндекс 360 API Rate Limit (HTTP 429). Ждем {retry_delay} сек (попытка {attempt+1}/{max_retries})...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Экспоненциальная задержка
+                    continue
+                else:
+                    raise RuntimeError(f"Превышен лимит запросов к Яндекс 360 (HTTP 429) после {max_retries} попыток.")
+                    
+            elif response.status_code != 200:
+                raise RuntimeError(
+                    f"Ошибка запроса к Яндекс 360 API (HTTP {response.status_code}) для организации {org_id}: {response.text}"
+                )
+            break
         data = response.json()
         page_users = data.get("users", [])
         if not page_users:
@@ -53,7 +67,7 @@ def fetch_yandex_users(token: str, org_id: str) -> List[Dict[str, Any]]:
             break
             
         page += 1
-        
+        time.sleep(0.5)  # Небольшая пауза между страницами для предотвращения новых лимитов
     logger.info(f"Организация {org_id}: получено {len(users)} аккаунтов.")
     return users
 
