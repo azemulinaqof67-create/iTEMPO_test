@@ -2042,7 +2042,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 if str(project_root) not in sys.path:
                     sys.path.insert(0, str(project_root))
                 from scripts.migrate_contacts_to_qdrant import migrate
-                await migrate(config=_config, force=True)
+                await migrate(config=_config, force=False)
                 set_contacts_sync_pending(False)
                 if _assistant and _assistant.chat_history:
                     await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Синхронизация контактов успешно завершена")
@@ -2061,7 +2061,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                     if get_contacts_sync_pending():
                         logger.info("Starting automatic nightly sync for contacts...")
                         from scripts.migrate_contacts_to_qdrant import migrate
-                        await migrate(config=_config, force=True)
+                        await migrate(config=_config, force=False)
                         set_contacts_sync_pending(False)
                         if _assistant and _assistant.chat_history:
                             await _assistant.chat_history.log_admin_action("system", "Синхронизация", "Автоматическая ночная синхронизация успешно завершена")

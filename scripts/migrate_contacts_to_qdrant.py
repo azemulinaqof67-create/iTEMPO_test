@@ -66,7 +66,7 @@ async def migrate(config=None, force=False):
     collection_name = "contacts_v1"
 
     # 4. Проверяем существование коллекции и получаем уже импортированные ID
-    existing_ids = set()
+    existing_points = {} # id -> (qdrant_id, hash)
     if force and qdrant_client.collection_exists(collection_name):
         logger.info(f"Флаг --force активен. Удаление существующей коллекции {collection_name}...")
         qdrant_client.delete_collection(collection_name)
@@ -78,16 +78,16 @@ async def migrate(config=None, force=False):
             records, offset = qdrant_client.scroll(
                 collection_name=collection_name,
                 limit=1000,
-                with_payload=["id"],
+                with_payload=["id", "content_hash"],
                 with_vectors=False,
                 offset=offset,
             )
             for r in records:
                 if r.payload and "id" in r.payload:
-                    existing_ids.add(r.payload["id"])
+                    existing_points[r.payload["id"]] = (r.id, r.payload.get("content_hash", ""))
             if offset is None:
                 break
-        logger.info(f"В Qdrant уже найдено {len(existing_ids)} векторизованных контактов.")
+        logger.info(f"В Qdrant уже найдено {len(existing_points)} векторизованных контактов.")
     else:
         logger.info(f"Создание коллекции {collection_name} в Qdrant...")
         qdrant_client.create_collection(
@@ -124,10 +124,40 @@ async def migrate(config=None, force=False):
             field_schema=models.PayloadSchemaType.KEYWORD,
         )
 
-    # Фильтруем контакты, оставляя только новые
-    rows_to_migrate = [r for r in rows if r["id"] not in existing_ids]
+    # Фильтруем контакты, оставляя только измененные и новые
+    import hashlib
+    def compute_contact_hash(r):
+        content = f"{r['company']}|{r['department']}|{r['full_name']}|{r['position']}|{r['phone']}|{r['email']}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    rows_to_migrate = []
+    sqlite_ids = set()
+    
+    for r in rows:
+        cid = r["id"]
+        sqlite_ids.add(cid)
+        chash = compute_contact_hash(r)
+        
+        if cid not in existing_points or existing_points[cid][1] != chash:
+            rows_to_migrate.append((r, chash))
+
+    # Удаляем устаревшие контакты (которых больше нет в SQLite или у которых старый формат UUID)
+    ids_to_delete = []
+    for cid, (q_id, chash) in existing_points.items():
+        if cid not in sqlite_ids:
+            ids_to_delete.append(q_id)
+        elif not isinstance(q_id, int):
+            ids_to_delete.append(q_id)
+
+    if ids_to_delete:
+        logger.info(f"Удаление {len(ids_to_delete)} устаревших записей из Qdrant...")
+        qdrant_client.delete(
+            collection_name=collection_name,
+            points_selector=models.PointIdsList(points=ids_to_delete)
+        )
+
     if not rows_to_migrate:
-        logger.info("Все контакты уже векторизованы.")
+        logger.info("Все контакты актуальны. Синхронизация не требуется.")
         return
 
     # Увеличиваем размер батча до 100 записей (максимально допустимый предел для одного запроса в Gemini API)
@@ -144,7 +174,8 @@ async def migrate(config=None, force=False):
             # Строим тексты для векторизации
             texts = []
             payloads = []
-            for r in batch:
+            for item in batch:
+                r, chash = item
                 full_name = r["full_name"] or ""
                 position = r["position"] or ""
                 department = r["department"] or ""
@@ -163,7 +194,8 @@ async def migrate(config=None, force=False):
                     "position": position,
                     "phone": phone,
                     "email": email,
-                    "exact_phone": phone # для точного поиска
+                    "exact_phone": phone, # для точного поиска
+                    "content_hash": chash
                 })
                 
             # Генерация dense векторов через EmbeddingService (с AdaptiveRateLimiter и ротацией ключей)
@@ -177,7 +209,7 @@ async def migrate(config=None, force=False):
             for p, d_emb, s_emb in zip(payloads, dense_embs, sparse_embs):
                 points.append(
                     PointStruct(
-                        id=str(uuid.uuid4()),
+                        id=int(p["id"]),
                         vector={
                             "": d_emb.tolist() if hasattr(d_emb, "tolist") else list(d_emb),
                             "sparse": s_emb

@@ -41,3 +41,6 @@ Thumbs.db
 client_config.json
 .env
 .env_old
+
+# main
+commands.md
