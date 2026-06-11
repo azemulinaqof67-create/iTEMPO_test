@@ -611,8 +611,13 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Проверка прав доступа
         if normalized_path:
             first_segment = parts[0] if parts else ""
-            if is_restricted and first_segment not in user_company_ids:
-                raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+            if is_restricted:
+                if first_segment in ("common", "shared"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
+                        raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+                elif first_segment not in user_company_ids:
+                    raise HTTPException(status_code=403, detail="Нет доступа к этой директории")
+        
                 
         target_dir = (data_path / normalized_path).resolve()
         if not target_dir.exists() or not target_dir.is_dir():
@@ -626,48 +631,43 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         
         if not normalized_path:
             # Корневой уровень
-            allowed_dirs = set(COMPANIES.keys()) | {"common"}
+            allowed_dirs = set(COMPANIES.keys()) | {"shared"}
             if is_restricted:
+                has_shared_access = "common" in user_company_ids or "shared" in user_company_ids
                 allowed_dirs = {d for d in allowed_dirs if d in user_company_ids}
+                if has_shared_access:
+                    allowed_dirs.add("shared")
+                
+            system_dirs = {".chunks_cache", ".trash", ".versions", "backups", "temp"}
                 
             for item in sorted(data_path.iterdir()):
-                if item.is_dir():
+                if item.is_dir() and item.name not in system_dirs:
                     if item.name in allowed_dirs:
                         items.append({
-                            "name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "name": COMPANIES.get(item.name, "Общие документы") if item.name != "shared" else "Общие документы",
                             "path": item.name,
                             "is_dir": True,
-                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "common" else "Общие документы",
+                            "company_name": COMPANIES.get(item.name, "Общие документы") if item.name != "shared" else "Общие документы",
                             "files_count": _count_files_in_dir(item)
                         })
-                    elif is_super and item.name not in {".chunks_cache"}:
+                    elif is_super:
                         items.append({
-                            "name": COMPANIES.get(item.name, f"Папка / {item.name}") if item.name != "common" else "Общие документы",
+                            "name": COMPANIES.get(item.name, f"Папка / {item.name}") if item.name != "shared" else "Общие документы",
                             "path": item.name,
                             "is_dir": True,
                             "company_name": f"Папка / {item.name}",
                             "files_count": _count_files_in_dir(item)
                         })
-                elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
-                    meta = _extract_doc_metadata(item)
-                    items.append({
-                        "name": item.name,
-                        "path": item.name,
-                        "is_dir": False,
-                        "title": meta["title"],
-                        "status": meta["status"],
-                        "company_name": "Все предприятия",
-                        "size": item.stat().st_size,
-                        "modified": item.stat().st_mtime
-                    })
         else:
             # Внутри какой-то директории
             first_segment = parts[0] if parts else ""
-            company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment != "common" else "Общие документы"
+            company_name = COMPANIES.get(first_segment, "Общие документы") if first_segment not in ("common", "shared") else "Общие документы"
             
+            system_dirs = {".chunks_cache", ".trash", ".versions", "backups", "temp"}
+            system_files = {"index.md", "readme.md", "conventions.md"}
             for item in sorted(target_dir.iterdir()):
                 rel_path = str(item.resolve().relative_to(data_path.resolve())).replace("\\", "/")
-                if item.is_dir() and item.name not in {".chunks_cache"}:
+                if item.is_dir() and item.name not in system_dirs:
                     items.append({
                         "name": CATEGORIES_NAMES.get(item.name, item.name),
                         "path": rel_path,
@@ -676,6 +676,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                         "files_count": _count_files_in_dir(item)
                     })
                 elif item.is_file() and item.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}:
+                    if item.name.lower() in system_files:
+                        continue
                     meta = _extract_doc_metadata(item)
                     items.append({
                         "name": item.name,
@@ -700,7 +702,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 name = COMPANIES[part]
             elif part in CATEGORIES_NAMES:
                 name = CATEGORIES_NAMES[part]
-            elif part == "common":
+            elif part in ("common", "shared"):
                 name = "Общие документы"
                 
             breadcrumbs.append({"name": name, "path": part_path})
@@ -762,14 +764,14 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         if not is_super:
             # Проверяем все переданные компании
             for cid in selected_companies:
-                if cid == "common":
-                    if "common" not in user_company_ids:
+                if cid in ("common", "shared"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
                         raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
                 elif cid not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
             if company_id:
-                if company_id == "common":
-                    if "common" not in user_company_ids:
+                if company_id in ("common", "shared"):
+                    if "common" not in user_company_ids and "shared" not in user_company_ids:
                         raise HTTPException(status_code=403, detail="Нет прав на работу с общими документами")
                 elif company_id not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на работу с документами другого предприятия")
@@ -804,7 +806,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         # Определяем, какую компанию передать ИИ для YAML frontmatter
         ai_company_id = company_id
         if selected_companies:
-            non_common = [c for c in selected_companies if c != "common"]
+            non_common = [c for c in selected_companies if c not in ("common", "shared")]
             ai_company_id = non_common[0] if non_common else None
 
         # ИИ конвертирует в Markdown формат
@@ -1040,9 +1042,9 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         is_super = user["role"] == "superadmin" or "all" in user_company_ids
 
         if not is_super:
-            target_cid = None if body.organization == "shared" else body.organization
+            target_cid = None if body.organization in ("shared", "common") else body.organization
             if target_cid is None:
-                if "common" not in user_company_ids:
+                if "common" not in user_company_ids and "shared" not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на сохранение общих документов")
             elif target_cid not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет прав на сохранение документов этого предприятия")
@@ -1198,7 +1200,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 raise HTTPException(status_code=403, detail="Нет доступа к исходному документу")
 
             target_cid = body.company_id or "shared"
-            if target_cid not in user_company_ids and target_cid != "shared":
+            if target_cid not in user_company_ids and target_cid not in ("shared", "common"):
                 raise HTTPException(status_code=403, detail="Нельзя перемещать документ в эту организацию")
 
         # Вычисляем относительный путь источника
@@ -1273,8 +1275,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             if not parts:
                 raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
             first_part = parts[0]
-            if first_part == "common":
-                if "common" not in user_company_ids:
+            if first_part in ("common", "shared"):
+                if "common" not in user_company_ids and "shared" not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
             elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет прав на удаление этого документа")
@@ -1491,8 +1493,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             if not parts:
                 raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
             first_part = parts[0]
-            if first_part == "common":
-                if "common" not in user_company_ids:
+            if first_part in ("common", "shared"):
+                if "common" not in user_company_ids and "shared" not in user_company_ids:
                     raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
             elif first_part not in user_company_ids:
                 raise HTTPException(status_code=403, detail="Нет доступа к содержимому этого документа")
@@ -1520,10 +1522,11 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             filtered_index = []
             for path in to_index:
                 try:
-                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    rel_str = os.path.relpath(Path(path).resolve(), data_path.resolve())
+                    rel = Path(rel_str)
                     if rel.parts:
                         first_part = rel.parts[0]
-                        if first_part == "common" and "common" in user_company_ids:
+                        if first_part in ("common", "shared") and ("common" in user_company_ids or "shared" in user_company_ids):
                             filtered_index.append(path)
                         elif first_part in user_company_ids:
                             filtered_index.append(path)
@@ -1536,7 +1539,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 rel = Path(path)
                 if rel.parts:
                     first_part = rel.parts[0]
-                    if first_part == "common" and "common" in user_company_ids:
+                    if first_part in ("common", "shared") and ("common" in user_company_ids or "shared" in user_company_ids):
                         filtered_delete.append(path)
                     elif first_part in user_company_ids:
                         filtered_delete.append(path)
@@ -1548,8 +1551,8 @@ def create_admin_app(config, assistant=None) -> FastAPI:
         rel_to_index = []
         for path in to_index:
             try:
-                rel = Path(path).resolve().relative_to(data_path.resolve())
-                rel_to_index.append(str(rel).replace("\\", "/"))
+                rel_str = os.path.relpath(Path(path).resolve(), data_path.resolve())
+                rel_to_index.append(rel_str.replace("\\", "/"))
             except ValueError:
                 rel_to_index.append(path)
         to_index = rel_to_index
@@ -1581,10 +1584,11 @@ def create_admin_app(config, assistant=None) -> FastAPI:
             # Фильтруем to_index (абсолютные пути)
             for path in list(_pending_changes["to_index"]):
                 try:
-                    rel = Path(path).resolve().relative_to(data_path.resolve())
+                    rel_str = os.path.relpath(Path(path).resolve(), data_path.resolve())
+                    rel = Path(rel_str)
                     if rel.parts:
                         first_part = rel.parts[0]
-                        if first_part == "common" and "common" in user_company_ids:
+                        if first_part in ("common", "shared") and ("common" in user_company_ids or "shared" in user_company_ids):
                             to_index.append(path)
                             _pending_changes["to_index"].remove(path)
                         elif first_part in user_company_ids:
@@ -1598,7 +1602,7 @@ def create_admin_app(config, assistant=None) -> FastAPI:
                 rel = Path(path)
                 if rel.parts:
                     first_part = rel.parts[0]
-                    if first_part == "common" and "common" in user_company_ids:
+                    if first_part in ("common", "shared") and ("common" in user_company_ids or "shared" in user_company_ids):
                         to_delete.append(path)
                         _pending_changes["to_delete"].remove(path)
                     elif first_part in user_company_ids:
@@ -2226,7 +2230,7 @@ async def _reindex_document(file_path: str):
 
         if chunks:
             embedder = EmbeddingService(_config)
-            rel_path = str(file.resolve().relative_to(Path(_config.data_path).resolve())).replace("\\", "/")
+            rel_path = os.path.relpath(file.resolve(), Path(_config.data_path).resolve()).replace("\\", "/")
             await embedder.incremental_update(chunks, target_sources=[rel_path])
             logger.info(f"Reindexed {len(chunks)} chunks from {file_path}")
         else:

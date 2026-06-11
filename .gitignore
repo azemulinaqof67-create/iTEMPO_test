@@ -44,3 +44,5 @@ client_config.json
 
 # main
 commands.md
+data/.versions/
+data/.trash/
