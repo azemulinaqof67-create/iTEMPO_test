@@ -30,7 +30,7 @@
             padding: 40px 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1500px;
             margin: 0 auto;
         }
         .header-box {
@@ -149,6 +149,7 @@
             color: var(--primary-blue);
             text-decoration: none;
             transition: color 0.2s;
+            white-space: nowrap;
         }
         .email-link:hover {
             color: var(--dark-blue);
@@ -193,7 +194,7 @@
         async function fetchContacts(searchQuery = '') {
             const tbody = document.getElementById('contactsTableBody');
             try {
-                const url = searchQuery ? `/api/contacts?limit=500&search=${encodeURIComponent(searchQuery)}` : `/api/contacts?limit=500`;
+                const url = searchQuery ? `/api/contacts?limit=10000&search=${encodeURIComponent(searchQuery)}` : `/api/contacts?limit=10000`;
                 const response = await fetch(url);
                 if (!response.ok) throw new Error("Ошибка сети");
                 const data = await response.json();
