@@ -41,6 +41,9 @@
 
     /usr/bin/sing-box -D /var/lib/sing-box -C /etc/sing-box run
 
+> 📘 **Полная документация по VPN:**
+> Подробности архитектуры VPN, решения проблем с "зависаниями", настройки прокси и инструкция по установке скрипта авто-восстановления (**VPN Watchdog**) находятся в отдельном файле: [VPN_SINGBOX.md](file:///e:/Old/bots/Worker/iTEMPO/iTEMPO_test/docs/VPN_SINGBOX.md).
+
 ### Сетевой интерфейс TUN
 При запуске `sing-box` создает виртуальную сетевую карту уровня ядра:
 
