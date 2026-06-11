@@ -750,7 +750,18 @@ function renderBreadcrumbs(crumbs) {
   const container = document.getElementById('explorerBreadcrumbs');
   if (!container) return;
   
-  container.innerHTML = crumbs.map((crumb, idx) => {
+  let backBtnHtml = '';
+  if (crumbs.length > 1) {
+    const parentPath = crumbs[crumbs.length - 2].path;
+    backBtnHtml = `
+      <button class="btn btn-secondary btn-sm" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; font-size: 13px; margin-right: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: var(--text-primary); cursor: pointer;" onclick="navigateExplorer('${escapeHtml(parentPath)}')">
+        <span>⬅️</span> Назад
+      </button>
+      <span style="opacity: 0.3; margin-right: 8px;">|</span>
+    `;
+  }
+  
+  const crumbsHtml = crumbs.map((crumb, idx) => {
     const isLast = idx === crumbs.length - 1;
     if (isLast) {
       return `<span style="color: var(--text-normal); font-weight: 600;">${escapeHtml(crumb.name)}</span>`;
@@ -760,6 +771,8 @@ function renderBreadcrumbs(crumbs) {
       <span style="opacity: 0.5; margin: 0 4px;">/</span>
     `;
   }).join('');
+
+  container.innerHTML = backBtnHtml + crumbsHtml;
 }
 
 window.navigateExplorer = function(path) {
